@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from support import choose_card, finish, resolve_dogma, scenario
+from support import ScenarioBuilder, choose_card, finish, resolve_dogma, scenario
 
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.effects import EffectStatus, load_effect_programs
@@ -20,13 +20,13 @@ REGISTRY = load_card_registry()
 PROGRAMS = load_effect_programs()
 
 
-def _solo():  # type: ignore[no-untyped-def]
+def _solo() -> ScenarioBuilder:
     return (
         scenario(REGISTRY).board(P1, Color.YELLOW, ("masonry",)).board(P2, Color.BLUE, ("pottery",))
     )
 
 
-def _four_castles():  # type: ignore[no-untyped-def]
+def _four_castles() -> tuple[str, ...]:
     return ("archery", "city-states", "domestication", "tools")
 
 
