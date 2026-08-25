@@ -23,6 +23,7 @@ WP6 atomic-boundary hooks.
 - WP6 achievement/terminal contract: `docs/WP6_ACHIEVEMENT_CONTRACT.md`
 - WP9 serialization/replay contract: `docs/WP9_REPLAY_CONTRACT.md`
 - Rules interpretations: `docs/RULES_DECISIONS.md`
+- Future roadmap: `docs/ROADMAP.md`
 - Agent conventions: `AGENTS.md`
 
 ## Development environment

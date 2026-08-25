@@ -20,7 +20,7 @@ from innovation_ai.innovation.types import (
 )
 
 ROOT = Path(__file__).parents[2]
-EXPECTED_FINGERPRINT = "sha256:e5bdba7c86d9fb95de70a236c0d51ded70c3a4648ded0667a062a73d2897c01b"
+EXPECTED_FINGERPRINT = "sha256:23fc84b70f401bba3e8d0abaaad0c28978cdaf076aef45e9e0cfc4b5810d5e86"
 
 
 def test_stable_value_types_and_card_id_normalization() -> None:

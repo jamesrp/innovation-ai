@@ -50,7 +50,7 @@ CHEMISTRY,5,blue,You may splay your blue cards right.,Draw and score a card of v
 COAL,5,red,Draw and tuck a 5.,You may splay your red cards right.,"You may score any one of your top cards. If you do, also score the card beneath it.",factory,factory,,,factory,factory,hex
 MEASUREMENT,5,green,"You may reveal and return a card from your hand. If you do, splay that color of your cards right, and draw a card of value equal to the number of cards of that color on your board.",,,bulb,bulb,,,leaf,bulb,hex
 PHYSICS,5,blue,"Draw three 6 and reveal them. If two or more of the drawn cards are the same color, return the drawn cards and all cards in your hand. Otherwise, keep them.",,,bulb,factory,,,bulb,bulb,hex
-SOCIETIES,5,purple,"I demand you transfer a card with a bulb higher than my top card of the same color from your board to my board! If you do, draw a 5!",,,crown,crown,,,hex,bulb,crown
+SOCIETIES,5,purple,"I demand you transfer a top card with a bulb higher than my top card of the same color from your board to my board! If you do, draw a 5!",,,crown,crown,,,hex,bulb,crown
 STATISTICS,5,yellow,I demand you transfer all the highest cards in your score pile to your hand!,You may splay your yellow cards right.,,leaf,leaf,,,bulb,leaf,hex
 STEAM ENGINE,5,yellow,"Draw and tuck two 4, then score your bottom yellow card.",,,factory,hex,,,factory,crown,factory
 THE PIRATE CODE,5,red,I demand you transfer two cards of value 4 or less from your score pile to my score pile!,"If any card was transferred due to the demand, score the lowest top card with a crown from your board.",,crown,crown,,,factory,crown,hex
