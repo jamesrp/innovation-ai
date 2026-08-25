@@ -9,6 +9,7 @@ from typing import Final
 from innovation_ai.innovation.effects.program import (
     ACTIVATOR,
     EXECUTOR,
+    BatchNode,
     CardSelector,
     ChoiceKind,
     ChoiceNode,
@@ -63,7 +64,7 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             Predicate.truthy("did-transfer"),
             "victim-draw-and-meld",
         ),
-        SequenceNode("victim-draw-and-meld", ("victim-draw-eight", "victim-meld-eight")),
+        BatchNode("victim-draw-and-meld", ("victim-draw-eight", "victim-meld-eight")),
         DrawNode("victim-draw-eight", ValueRef.literal(8), "victim-eight", player=EXECUTOR),
         MoveNode(
             "victim-meld-eight",
@@ -71,7 +72,7 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             CardSelector.from_variable("victim-eight"),
             destination_player=EXECUTOR,
         ),
-        SequenceNode("corporations-meld", ("executor-draw-eight", "executor-meld-eight")),
+        BatchNode("corporations-meld", ("executor-draw-eight", "executor-meld-eight")),
         DrawNode("executor-draw-eight", ValueRef.literal(8), "executor-eight", player=EXECUTOR),
         MoveNode(
             "executor-meld-eight",

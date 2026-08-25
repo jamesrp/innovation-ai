@@ -17,11 +17,14 @@ from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.effects import (
     EffectContext,
     EffectProgramRegistry,
+    EffectStatus,
     UnimplementedCardError,
     build_effect_programs,
     effects_fingerprint,
     implemented_card_ids,
     load_effect_programs,
+    start_dogma,
+    submit_effect_action,
 )
 from innovation_ai.innovation.effects.program import (
     ConditionNode,
@@ -31,8 +34,12 @@ from innovation_ai.innovation.effects.program import (
     ProgramEffect,
 )
 from innovation_ai.innovation.effects.registry import EffectRegistryError
-from innovation_ai.innovation.state import GameState
-from innovation_ai.innovation.types import CardId, DogmaEffectId
+from innovation_ai.innovation.state import (
+    ExplicitPlayerPosition,
+    GameState,
+    build_explicit_state,
+)
+from innovation_ai.innovation.types import CardId, DogmaEffectId, PlayerId
 
 REGISTRY = load_card_registry()
 
@@ -66,7 +73,40 @@ def test_milestone_one_coverage_is_reported_rather_than_silently_incomplete() ->
         pytest.skip(f"{len(missing)} of {TOTAL_CARDS} cards remain: {missing[:5]}...")
 
 
-def test_discovery_is_deterministic_and_cached() -> None:
+def test_every_card_resolves_from_its_minimum_board_state() -> None:
+    """Registration alone is insufficient: every card must survive legal partial execution."""
+
+    programs = load_effect_programs()
+    for card in REGISTRY.cards:
+        state = build_explicit_state(
+            REGISTRY,
+            positions=(
+                (
+                    PlayerId.PLAYER_1,
+                    ExplicitPlayerPosition(board=((card.color, (card.id,)),)),
+                ),
+            ),
+        )
+        resolution = start_dogma(
+            state,
+            card.id,
+            PlayerId.PLAYER_1,
+            programs,
+            REGISTRY,
+        )
+        decision_count = 0
+        while resolution.status is EffectStatus.AWAIT_DECISION:
+            decision_count += 1
+            assert decision_count <= 128, f"{card.id} did not converge"
+            decision = resolution.decision
+            assert decision is not None
+            resolution = submit_effect_action(
+                resolution.state,
+                decision.legal_actions[0],
+                programs,
+                REGISTRY,
+            )
+        assert resolution.status in {EffectStatus.COMPLETE, EffectStatus.TERMINAL}, card.id
     first = load_effect_programs()
     assert load_effect_programs() is first
     rebuilt = build_effect_programs(REGISTRY)

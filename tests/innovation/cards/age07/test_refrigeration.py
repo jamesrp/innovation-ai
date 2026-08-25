@@ -35,11 +35,42 @@ def test_five_cards_returns_exactly_two_chosen_by_the_victim() -> None:
         programs=PROGRAMS,
     )
     assert tuple(decision.chooser for decision in result.decisions) == (P2, P2)
+    assert all(
+        decision.observation.player(P2).hand.known_cards
+        == (
+            CardId("alchemy"),
+            CardId("canal-building"),
+            CardId("construction"),
+            CardId("tools"),
+            CardId("writing"),
+        )
+        for decision in result.decisions
+    )
     assert set(result.state.player(P2).hand) == {
         CardId("writing"),
         CardId("canal-building"),
         CardId("alchemy"),
     }
+
+
+def test_selected_same_age_cards_are_ordered_only_after_the_subset_is_fixed() -> None:
+    state = (
+        _base().hand(P2, ("tools", "writing", "canal-building", "construction", "alchemy")).build()
+    )
+    result = resolve_dogma(
+        state,
+        "refrigeration",
+        choose_card("canal-building"),
+        choose_card("construction"),
+        choose_card("construction"),
+        registry=REGISTRY,
+        programs=PROGRAMS,
+    )
+
+    assert tuple(decision.chooser for decision in result.decisions) == (P2, P2, P2)
+    assert result.state.supply.pile(2).index(CardId("construction")) < result.state.supply.pile(
+        2
+    ).index(CardId("canal-building"))
 
 
 def test_one_card_rounds_down_to_zero_returns() -> None:

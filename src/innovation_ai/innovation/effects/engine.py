@@ -24,6 +24,7 @@ from innovation_ai.innovation.actions import (
     DecisionSource,
     DeclineAction,
     FinishSelectionAction,
+    IncrementalSelectionKind,
     SemanticAction,
 )
 from innovation_ai.innovation.board import (
@@ -108,6 +109,7 @@ from .program import (
     ChoiceNode,
     ClaimAchievementNode,
     Cmp,
+    CollectNode,
     ConditionNode,
     DrawNode,
     EffectNode,
@@ -142,6 +144,7 @@ from .program import (
     TimesNode,
     ValueRef,
     ValueRefKind,
+    VariableScope,
     WinMetric,
     WinMode,
     WinNode,
@@ -664,7 +667,8 @@ def evaluate_predicate(
         )
 
     assert predicate.variable is not None
-    value = get_effect_variable(state, context, predicate.variable)
+    variable_context = _variable_context(context, predicate.variable_scope)
+    value = get_effect_variable(state, variable_context, predicate.variable)
     if predicate.kind is PredicateKind.VARIABLE_TRUTHY:
         return bool(value)
     if predicate.kind is PredicateKind.VARIABLE_EQUALS:
@@ -790,6 +794,10 @@ def _program_frame(
 
 def _root_context(context: EffectContext) -> EffectContext:
     return replace(context, scope=context.scope.split("/", maxsplit=1)[0])
+
+
+def _variable_context(context: EffectContext, scope: VariableScope) -> EffectContext:
+    return _root_context(context) if scope is VariableScope.ROOT else context
 
 
 def _bump_step(state: GameState, context: EffectContext) -> GameState:
@@ -1052,7 +1060,10 @@ def _execute_leaf(
     elif isinstance(node, MoveNode):
         updated, change, moved = _movement_change(updated, context, node, registry, programs)
         if node.result_variable is not None:
-            updated = set_effect_variable(updated, context, node.result_variable, change.changed)
+            result_context = _variable_context(context, node.result_scope)
+            updated = set_effect_variable(
+                updated, result_context, node.result_variable, change.changed
+            )
         if node.moved_variable is not None:
             updated = set_effect_variable(
                 updated,
@@ -1430,6 +1441,10 @@ def _choice_colors(state: GameState, context: EffectContext, node: ChoiceNode) -
         colors = tuple(color for color in Color if player.board.stack(color).cards)
     else:
         colors = node.colors
+    if node.required_splay is not None:
+        colors = tuple(
+            color for color in colors if player.board.stack(color).splay is node.required_splay
+        )
     if node.minimum_stack_size:
         colors = tuple(
             color
@@ -1459,6 +1474,7 @@ def _choice_actions(
         # the effective minimum only when the whole candidate set is genuinely too small; choices
         # that would strand an otherwise reachable minimum are never offered.
         candidates = _choice_cards(state, context, node, registry, programs)
+        _require_exact_choice_visibility(state, context, node, candidates, registry)
         effective_minimum = min(node.minimum, len(candidates))
         floor = selected[-1].value if selected else ""
         available = tuple(
@@ -1513,6 +1529,8 @@ def _choice_actions(
     elif node.choice_kind is ChoiceKind.BRANCH:
         actions.extend(ChooseBranchAction(decision_id, branch) for branch in node.branches)
     else:
+        cards = _choice_cards(state, context, node, registry, programs)
+        _require_exact_choice_visibility(state, context, node, cards, registry)
         actions.extend(
             ChooseCardAction(decision_id, card)
             for card in _order_candidates(state, context, node, registry, programs)
@@ -1614,12 +1632,15 @@ def _decision_context(
     frozen = frozen_icon_counts(state)
     selected: tuple[CardId, ...] = ()
     minimum, maximum = node.minimum, node.maximum
+    selection_kind = IncrementalSelectionKind.NONE
     if node.choice_kind is ChoiceKind.BOUNDED_CARDS:
         selected = _selected_cards(state, context, node)
+        selection_kind = IncrementalSelectionKind.BOUNDED_SUBSET
     elif node.choice_kind is ChoiceKind.ORDER_CARDS:
         selected = _order_progress(state, context, node)
         total = len(_choice_cards(state, context, node, registry, programs))
         minimum = maximum = total
+        selection_kind = IncrementalSelectionKind.CARD_ORDER
     return DecisionContext(
         demand=context.demand,
         shared=context.shared,
@@ -1630,6 +1651,7 @@ def _decision_context(
         minimum_count=minimum,
         maximum_count=maximum,
         selected_so_far=selected,
+        incremental_selection=selection_kind,
     )
 
 
@@ -1825,6 +1847,22 @@ def _advance_node(
         if decision is None:
             raise EffectInvariantError(f"choice node {node.node_id} produced no legal action")
         return EffectResolution(state, EffectStatus.AWAIT_DECISION, decision)
+    if isinstance(node, CollectNode):
+        card_id = _card_variable(state, context, node.card_variable)
+        updated = state
+        if card_id is not None:
+            collected = _card_tuple_variable(state, context, node.result_variable)
+            if card_id in collected:
+                raise EffectInvariantError(
+                    f"collection node {node.node_id} selected duplicate card {card_id}"
+                )
+            updated = set_effect_variable(
+                state,
+                context,
+                node.result_variable,
+                tuple(item.value for item in (*collected, card_id)),
+            )
+        return EffectResolution(_pop(updated), EffectStatus.CONTINUE)
     if isinstance(node, SequenceNode):
         if frame.step >= len(node.children):
             return EffectResolution(_pop(state), EffectStatus.CONTINUE)

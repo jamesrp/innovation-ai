@@ -32,6 +32,11 @@ def test_score_eight_branch_scores_before_offering_the_return() -> None:
         registry=REGISTRY,
         programs=PROGRAMS,
     )
+    flight_events = tuple(event for event in result.events if CardId("flight") in event.card_ids)
+    assert len(flight_events) == 3
+    assert flight_events[0].atomic_group_id is not None
+    assert flight_events[0].atomic_group_id == flight_events[1].atomic_group_id
+    assert flight_events[2].atomic_group_id != flight_events[0].atomic_group_id
     offered = {
         action.card_id for action in result.decisions[1].legal_actions if hasattr(action, "card_id")
     }

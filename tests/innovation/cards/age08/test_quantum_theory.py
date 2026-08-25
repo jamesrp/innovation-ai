@@ -33,6 +33,17 @@ def test_exactly_two_returns_draw_one_ten_to_hand_then_score_the_next_ten() -> N
     assert result.status is EffectStatus.COMPLETE
     assert result.state.player(P1).hand == (CardId("databases"),)
     assert result.state.player(P1).score_pile == (CardId("robotics"),)
+    robotics_events = tuple(
+        event for event in result.events if CardId("robotics") in event.card_ids
+    )
+    assert len(robotics_events) == 2
+    assert robotics_events[0].atomic_group_id is not None
+    assert len({event.atomic_group_id for event in robotics_events}) == 1
+    databases_events = tuple(
+        event for event in result.events if CardId("databases") in event.card_ids
+    )
+    assert len(databases_events) == 1
+    assert databases_events[0].atomic_group_id != robotics_events[0].atomic_group_id
     assert result.changed_cards() == (
         CardId("writing"),
         CardId("tools"),

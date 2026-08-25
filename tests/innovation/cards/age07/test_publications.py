@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from support import choose_card, choose_color, decline, resolve_dogma, scenario
 
+from innovation_ai.innovation.actions import (
+    ChooseCardAction,
+    IncrementalSelectionKind,
+    OrderCardsAction,
+)
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.effects import load_effect_programs
 from innovation_ai.innovation.types import CardId, Color, PlayerId, SplayDirection
@@ -36,6 +41,15 @@ def test_rearranging_preserves_splay_until_the_second_effect_changes_it() -> Non
         registry=REGISTRY,
         programs=PROGRAMS,
     )
+    first_order = result.decisions[1]
+    second_order = result.decisions[2]
+    assert first_order.context is not None
+    assert first_order.context.incremental_selection is IncrementalSelectionKind.CARD_ORDER
+    assert first_order.context.selected_so_far == ()
+    assert all(isinstance(action, ChooseCardAction) for action in first_order.legal_actions)
+    assert not any(isinstance(action, OrderCardsAction) for action in first_order.legal_actions)
+    assert second_order.context is not None
+    assert second_order.context.selected_so_far == (CardId("publications"),)
     stack = result.state.player(P1).board.stack(Color.BLUE)
     assert stack.cards == (
         CardId("publications"),

@@ -29,11 +29,12 @@ def test_every_two_clocks_returns_one_score_with_hidden_ties_owned_by_the_oppone
         choose_value(2),
         choose_card("construction"),
         choose_value(2),
+        choose_card("construction"),
         registry=REGISTRY,
         programs=PROGRAMS,
     )
     assert result.status is EffectStatus.COMPLETE
-    assert tuple(decision.chooser for decision in result.decisions) == (P1, P2, P1)
+    assert tuple(decision.chooser for decision in result.decisions) == (P1, P2, P1, P2)
     assert all(
         isinstance(action, ChooseValueAction) for action in result.decisions[0].legal_actions
     )
@@ -42,4 +43,5 @@ def test_every_two_clocks_returns_one_score_with_hidden_ties_owned_by_the_oppone
         for action in result.decisions[1].legal_actions
         if isinstance(action, ChooseCardAction)
     } == {CardId("canal-building"), CardId("construction")}
+    assert result.decisions[2].observation.player(P2).score_pile.values == (1, 2, 2)
     assert result.state.player(P2).score_pile == (CardId("tools"),)

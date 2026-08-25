@@ -31,6 +31,11 @@ def test_successful_demand_scores_the_factory_top_and_both_executors_meld_eights
     )
     assert result.status is EffectStatus.COMPLETE
     assert len(result.decisions) == 1
+    for card_id in (CardId("flight"), CardId("socialism")):
+        meld_events = tuple(event for event in result.events if card_id in event.card_ids)
+        assert len(meld_events) == 2
+        assert meld_events[0].atomic_group_id is not None
+        assert len({event.atomic_group_id for event in meld_events}) == 1
     assert result.state.player(P1).score_pile == (CardId("skyscrapers"),)
     assert result.state.player(P2).board.stack(Color.RED).top == CardId("flight")
     assert result.state.player(P1).board.stack(Color.PURPLE).top == CardId("socialism")

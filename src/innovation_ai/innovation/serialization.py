@@ -28,6 +28,7 @@ from innovation_ai.innovation.actions import (
     DogmaAction,
     DrawAction,
     FinishSelectionAction,
+    IncrementalSelectionKind,
     MeldAction,
     OrderCardsAction,
     SemanticAction,
@@ -495,6 +496,7 @@ def _decision_context(value: JsonValue) -> DecisionContext | None:
             "minimum_count",
             "maximum_count",
             "selected_so_far",
+            "incremental_selection",
         },
         "decision.context",
     )
@@ -513,6 +515,11 @@ def _decision_context(value: JsonValue) -> DecisionContext | None:
         minimum_count=_integer(payload["minimum_count"], "decision.context.minimum_count"),
         maximum_count=_integer(payload["maximum_count"], "decision.context.maximum_count"),
         selected_so_far=_cards(payload["selected_so_far"], "decision.context.selected_so_far"),
+        incremental_selection=_enum(
+            IncrementalSelectionKind,
+            payload["incremental_selection"],
+            "decision.context.incremental_selection",
+        ),
     )
 
 

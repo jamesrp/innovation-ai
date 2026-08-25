@@ -1,5 +1,8 @@
 """SKYSCRAPERS - demand a non-yellow clock top onto the activator's board; if it
 moves, score the card immediately beneath it and return every other card in that pile.
+
+The beneath card and return set are snapshotted, the owner orders returns, and the score plus all
+returns commit as one compound atom.
 """
 
 from __future__ import annotations
@@ -9,7 +12,9 @@ from typing import Final
 from innovation_ai.innovation.effects.program import (
     ACTIVATOR,
     EXECUTOR,
+    BatchNode,
     CardSelector,
+    CardSelectorKind,
     ChoiceKind,
     ChoiceNode,
     ConditionNode,
@@ -29,6 +34,12 @@ from innovation_ai.innovation.types import CardId, Color, DogmaEffectId, Icon
 CARD_ID: Final[CardId] = CardId("skyscrapers")
 
 _VICTIM_PILE: Final = CardSelector.stack(EXECUTOR, color_variable="transferred-color")
+_VICTIM_OTHER_CARDS: Final = CardSelector(
+    CardSelectorKind.BOARD_STACK,
+    EXECUTOR,
+    color_variable="transferred-color",
+    exclude_variable="beneath-card",
+)
 
 EFFECTS: Final[EffectProgram] = EffectProgram(
     "skyscrapers-v1",
@@ -66,30 +77,49 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ),
         SequenceNode(
             "score-and-return-pile",
-            ("score-beneath", "order-other-cards", "return-other-cards"),
+            (
+                "bind-beneath-card",
+                "bind-other-cards",
+                "order-other-cards",
+                "commit-score-and-returns",
+            ),
         ),
-        MoveNode(
-            "score-beneath",
-            MovementKind.SCORE,
-            CardSelector.stack(
+        LetNode(
+            "bind-beneath-card",
+            "beneath-card",
+            cards=CardSelector.stack(
                 EXECUTOR,
                 color_variable="transferred-color",
                 position=StackPosition.TOP,
             ),
-            destination_player=EXECUTOR,
+        ),
+        LetNode(
+            "bind-other-cards",
+            "other-cards",
+            cards=_VICTIM_OTHER_CARDS,
         ),
         ChoiceNode(
             "order-other-cards",
             ChoiceKind.ORDER_CARDS,
             "return-order",
             chooser=EXECUTOR,
-            cards=_VICTIM_PILE,
+            cards=CardSelector.from_variable("other-cards"),
             order_group=OrderGroup.AGE,
+        ),
+        BatchNode(
+            "commit-score-and-returns",
+            ("score-beneath", "return-other-cards"),
+        ),
+        MoveNode(
+            "score-beneath",
+            MovementKind.SCORE,
+            CardSelector.from_variable("beneath-card"),
+            destination_player=EXECUTOR,
         ),
         MoveNode(
             "return-other-cards",
             MovementKind.RETURN,
-            _VICTIM_PILE,
+            CardSelector.from_variable("other-cards"),
             order_variable="return-order",
         ),
     ),

@@ -33,6 +33,18 @@ def test_every_four_activator_crowns_demands_one_victim_owned_score_choice() -> 
         programs=PROGRAMS,
     )
     assert tuple(decision.chooser for decision in result.decisions) == (P2, P2)
+    assert all(
+        decision.observation.player(P2).score_pile.known_cards
+        == (CardId("canal-building"), CardId("construction"), CardId("currency"))
+        for decision in result.decisions
+    )
+    transfers = tuple(
+        event
+        for event in result.events
+        if event.change is not None and event.change.kind.value == "transfer"
+    )
+    assert len(transfers) == 1
+    assert set(transfers[0].card_ids) == {CardId("construction"), CardId("currency")}
     assert set(result.state.player(P1).score_pile) == {
         CardId("construction"),
         CardId("currency"),

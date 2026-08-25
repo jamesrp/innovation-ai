@@ -1,8 +1,8 @@
-"""COMBUSTION - demand: "I demand you transfer one card from your score pile to my
-score pile for every four crowns on my board!" Then: "Return your bottom red card."
+"""COMBUSTION - demand one score card per four activator crowns, then return the
+victim's bottom red card.
 
-The crown quantity belongs to the demand instruction and is snapshotted by ``TimesNode`` before
-its first transfer. Each demanded private-score choice belongs to the victim, the zone owner.
+Every mandatory private-score choice is collected against the unchanged original score pile;
+the complete selected set then moves as one grouped transfer.
 """
 
 from __future__ import annotations
@@ -13,8 +13,10 @@ from innovation_ai.innovation.effects.program import (
     ACTIVATOR,
     EXECUTOR,
     CardSelector,
+    CardSelectorKind,
     ChoiceKind,
     ChoiceNode,
+    CollectNode,
     EffectProgram,
     MovementKind,
     MoveNode,
@@ -29,6 +31,12 @@ from innovation_ai.innovation.types import CardId, Color, DogmaEffectId, Icon
 
 CARD_ID: Final[CardId] = CardId("combustion")
 
+_UNSELECTED_SCORES: Final = CardSelector(
+    CardSelectorKind.SCORE,
+    EXECUTOR,
+    exclude_variable="selected-score-cards",
+)
+
 EFFECTS: Final[EffectProgram] = EffectProgram(
     "combustion-v1",
     CARD_ID,
@@ -37,24 +45,26 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ProgramEffect(DogmaEffectId(CARD_ID, 2), False, "combustion-return"),
     ),
     (
+        SequenceNode("combustion-demand", ("collect-demanded-scores", "transfer-scores")),
         TimesNode(
-            "combustion-demand",
+            "collect-demanded-scores",
             ValueRef.icon_count(Icon.CROWN, ACTIVATOR, per=4),
-            "transfer-one-sequence",
+            "collect-one-score",
         ),
-        SequenceNode("transfer-one-sequence", ("choose-score-card", "transfer-score-card")),
+        SequenceNode("collect-one-score", ("choose-score-card", "remember-score-card")),
         ChoiceNode(
             "choose-score-card",
             ChoiceKind.HIDDEN_CARD,
             "score-card",
             chooser=EXECUTOR,
-            cards=CardSelector.score(EXECUTOR),
+            cards=_UNSELECTED_SCORES,
             owner=EXECUTOR,
         ),
+        CollectNode("remember-score-card", "score-card", "selected-score-cards"),
         MoveNode(
-            "transfer-score-card",
+            "transfer-scores",
             MovementKind.TRANSFER,
-            CardSelector.from_variable("score-card"),
+            CardSelector.from_variable("selected-score-cards"),
             destination_player=ACTIVATOR,
             destination_zone=ZoneKind.SCORE,
         ),

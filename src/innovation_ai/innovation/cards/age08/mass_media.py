@@ -7,8 +7,9 @@ from __future__ import annotations
 from typing import Final
 
 from innovation_ai.innovation.effects.program import (
-    ALL_PLAYERS,
     EXECUTOR,
+    OPPONENT,
+    BatchNode,
     CardSelector,
     CardSelectorKind,
     ChoiceKind,
@@ -17,6 +18,7 @@ from innovation_ai.innovation.effects.program import (
     EffectProgram,
     MovementKind,
     MoveNode,
+    OrderGroup,
     Predicate,
     ProgramEffect,
     SequenceNode,
@@ -27,9 +29,14 @@ from innovation_ai.innovation.types import CardId, Color, DogmaEffectId, SplayDi
 
 CARD_ID: Final[CardId] = CardId("mass-media")
 
-_ALL_CHOSEN_VALUE_SCORES: Final = CardSelector(
+_EXECUTOR_CHOSEN_VALUE_SCORES: Final = CardSelector(
     CardSelectorKind.SCORE,
-    ALL_PLAYERS,
+    EXECUTOR,
+    value_expr=ValueRef.from_variable("chosen-value"),
+)
+_OPPONENT_CHOSEN_VALUE_SCORES: Final = CardSelector(
+    CardSelectorKind.SCORE,
+    OPPONENT,
     value_expr=ValueRef.from_variable("chosen-value"),
 )
 
@@ -66,7 +73,12 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ),
         SequenceNode(
             "choose-and-return-scores",
-            ("choose-value", "return-all-chosen-value-scores"),
+            (
+                "choose-value",
+                "order-executor-scores",
+                "order-opponent-scores",
+                "return-chosen-value-scores",
+            ),
         ),
         ChoiceNode(
             "choose-value",
@@ -75,10 +87,37 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             chooser=EXECUTOR,
             values=tuple(range(1, 11)),
         ),
+        ChoiceNode(
+            "order-executor-scores",
+            ChoiceKind.ORDER_CARDS,
+            "executor-return-order",
+            chooser=EXECUTOR,
+            cards=_EXECUTOR_CHOSEN_VALUE_SCORES,
+            order_group=OrderGroup.AGE,
+        ),
+        ChoiceNode(
+            "order-opponent-scores",
+            ChoiceKind.ORDER_CARDS,
+            "opponent-return-order",
+            chooser=OPPONENT,
+            cards=_OPPONENT_CHOSEN_VALUE_SCORES,
+            order_group=OrderGroup.AGE,
+        ),
+        BatchNode(
+            "return-chosen-value-scores",
+            ("return-executor-scores", "return-opponent-scores"),
+        ),
         MoveNode(
-            "return-all-chosen-value-scores",
+            "return-executor-scores",
             MovementKind.RETURN,
-            _ALL_CHOSEN_VALUE_SCORES,
+            _EXECUTOR_CHOSEN_VALUE_SCORES,
+            order_variable="executor-return-order",
+        ),
+        MoveNode(
+            "return-opponent-scores",
+            MovementKind.RETURN,
+            _OPPONENT_CHOSEN_VALUE_SCORES,
+            order_variable="opponent-return-order",
         ),
         SequenceNode("mass-media-splay", ("choose-purple", "splay-purple")),
         ChoiceNode(

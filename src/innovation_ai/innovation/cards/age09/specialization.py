@@ -39,13 +39,22 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
     (
         SequenceNode(
             "specialization-take",
-            ("choose-reveal", "reveal-card", "bind-color", "take-opponent-tops"),
+            ("choose-reveal", "if-revealed"),
         ),
         ChoiceNode(
             "choose-reveal",
             ChoiceKind.CARD,
             "revealed-card",
             cards=CardSelector.hand(EXECUTOR),
+        ),
+        ConditionNode(
+            "if-revealed",
+            Predicate.truthy("revealed-card"),
+            "reveal-and-take",
+        ),
+        SequenceNode(
+            "reveal-and-take",
+            ("reveal-card", "bind-color", "take-opponent-tops"),
         ),
         RevealNode("reveal-card", CardSelector.from_variable("revealed-card")),
         LetNode("bind-color", "revealed-color", color_of="revealed-card"),

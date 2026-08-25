@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from support import choose_card, resolve_dogma, scenario
+from support import choose_card, choose_color, resolve_dogma, scenario
 
+from innovation_ai.innovation.actions import ChooseColorAction
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.effects import load_effect_programs
 from innovation_ai.innovation.types import CardId, Color, PlayerId, SplayDirection
@@ -39,7 +40,7 @@ def test_hand_returns_are_bulk_ordered_before_three_sixes_are_drawn() -> None:
         state,
         "railroad",
         choose_card("writing"),
-        choose_card("construction"),
+        choose_color(Color.RED),
         registry=REGISTRY,
         programs=PROGRAMS,
     )
@@ -76,11 +77,13 @@ def test_only_tops_of_currently_right_splayed_stacks_are_offered() -> None:
     result = resolve_dogma(
         state,
         "railroad",
-        choose_card("construction"),
+        choose_color(Color.RED),
         registry=REGISTRY,
         programs=PROGRAMS,
     )
     offered = {
-        action.card_id for action in result.decisions[0].legal_actions if hasattr(action, "card_id")
+        action.color
+        for action in result.decisions[0].legal_actions
+        if isinstance(action, ChooseColorAction)
     }
-    assert offered == {CardId("construction")}
+    assert offered == {Color.RED}

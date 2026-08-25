@@ -19,7 +19,7 @@ from innovation_ai.innovation.types import (
 )
 
 ACTION_SCHEMA_VERSION = 1
-DECISION_SCHEMA_VERSION = 2
+DECISION_SCHEMA_VERSION = 3
 _BRANCH_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -228,6 +228,14 @@ class DecisionSource:
             raise ValueError("decision source effect must belong to its source card")
 
 
+class IncrementalSelectionKind(StrEnum):
+    """Semantic purpose of repeated choose-next decisions inside one effect choice."""
+
+    NONE = "none"
+    BOUNDED_SUBSET = "bounded-subset"
+    CARD_ORDER = "card-order"
+
+
 @dataclass(frozen=True, slots=True)
 class DecisionContext:
     """Dogma and selection context a policy needs to read a decision's semantics.
@@ -245,6 +253,7 @@ class DecisionContext:
     minimum_count: int = 1
     maximum_count: int = 1
     selected_so_far: tuple[CardId, ...] = ()
+    incremental_selection: IncrementalSelectionKind = IncrementalSelectionKind.NONE
 
     def __post_init__(self) -> None:
         if self.minimum_count < 0 or self.maximum_count < self.minimum_count:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
+from innovation_ai.innovation.effects.model import ScopedVariables
 from innovation_ai.innovation.effects.program import (
     ACTIVATOR,
     EXECUTOR,
@@ -20,6 +21,7 @@ from innovation_ai.innovation.effects.program import (
     ProgramEffect,
     SequenceNode,
     ValueRef,
+    VariableScope,
     ZoneKind,
 )
 from innovation_ai.innovation.types import CardId, DogmaEffectId, Icon
@@ -27,20 +29,25 @@ from innovation_ai.innovation.types import CardId, DogmaEffectId, Icon
 CARD_ID: Final[CardId] = CardId("gunpowder")
 
 
-def _demand_transferred_a_card(state: Any, context: Any, registry: Any) -> bool:
-    """Whether the preceding demand caused at least one gameplay change."""
+def _own_demand_transferred(state: Any, context: Any, registry: Any) -> bool:
+    """Read only this direct Gunpowder activation's persisted demand result."""
 
-    del context, registry
-    return any(
-        variable.name == "dogma:qualifying-change-count"
-        and isinstance(variable.value, int)
-        and not isinstance(variable.value, bool)
-        and variable.value > 0
-        for variable in state.effect_variables
+    del registry
+    if context.nested:
+        return False
+    root_scope = context.scope.split("/", maxsplit=1)[0]
+    return (
+        ScopedVariables(state.effect_variables).get(
+            root_scope,
+            "gunpowder-demand-transferred",
+            False,
+        )
+        is True
     )
 
 
-PREDICATES: Final = {"demand-transferred-a-card": _demand_transferred_a_card}
+PREDICATES: Final = {"own-demand-transferred": _own_demand_transferred}
+
 
 EFFECTS: Final[EffectProgram] = EffectProgram(
     "gunpowder-v1",
@@ -64,10 +71,12 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             CardSelector.from_variable("castle-top"),
             destination_player=ACTIVATOR,
             destination_zone=ZoneKind.SCORE,
+            result_variable="gunpowder-demand-transferred",
+            result_scope=VariableScope.ROOT,
         ),
         ConditionNode(
             "gunpowder-follow-up",
-            Predicate.named("demand-transferred-a-card"),
+            Predicate.named("own-demand-transferred"),
             "draw-score-two",
         ),
         BatchNode("draw-score-two", ("draw-two", "score-two")),

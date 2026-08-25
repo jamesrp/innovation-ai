@@ -6,8 +6,25 @@ from support import ScenarioBuilder, choose_card, resolve_dogma, scenario
 
 from innovation_ai.innovation.actions import ChooseCardAction
 from innovation_ai.innovation.catalog import load_card_registry
-from innovation_ai.innovation.effects import load_effect_programs
-from innovation_ai.innovation.types import CardId, Color, PlayerId
+from innovation_ai.innovation.effects import (
+    EffectContext,
+    EffectProgramRegistry,
+    EffectStatus,
+    load_effect_programs,
+    start_effect,
+    submit_effect_action,
+)
+from innovation_ai.innovation.effects.program import (
+    EXECUTOR,
+    CardSelector,
+    ChoiceKind,
+    ChoiceNode,
+    EffectProgram,
+    NestedNode,
+    ProgramEffect,
+    SequenceNode,
+)
+from innovation_ai.innovation.types import CardId, Color, DogmaEffectId, PlayerId
 
 P1 = PlayerId.PLAYER_1
 P2 = PlayerId.PLAYER_2
@@ -86,4 +103,116 @@ def test_a_stronger_factory_opponent_is_immune_and_no_follow_up_occurs() -> None
     result = resolve_dogma(state, "gunpowder", registry=REGISTRY, programs=PROGRAMS)
     assert result.decisions == ()
     assert result.state.player(P2).board.stack(Color.YELLOW).top == CardId("masonry")
+    assert not result.state.player(P1).score_pile
+
+
+def test_nested_gunpowder_ignores_unrelated_changes_in_the_outer_dogma() -> None:
+    state = (
+        scenario(REGISTRY)
+        .board(P1, Color.GREEN, ("self-service",))
+        .board(P1, Color.RED, ("gunpowder",))
+        .board(P2, Color.RED, ("optics",))
+        .board(P2, Color.BLUE, ("experimentation",))
+        .board(P2, Color.GREEN, ("currency",))
+        .supply(2, ("calendar",))
+        .supply(5, ("chemistry",))
+        .build()
+    )
+    result = resolve_dogma(
+        state,
+        "self-service",
+        choose_card("experimentation"),
+        choose_card("gunpowder"),
+        registry=REGISTRY,
+        programs=PROGRAMS,
+    )
+
+    assert CardId("chemistry") in result.state.player(P2).board.stack(Color.BLUE).cards
+    assert CardId("calendar") in result.state.supply.pile(2)
+    assert CardId("calendar") not in result.state.player(P1).score_pile
+
+
+def test_nested_gunpowder_without_a_demand_is_a_no_op() -> None:
+    state = (
+        scenario(REGISTRY)
+        .board(P1, Color.GREEN, ("self-service",))
+        .board(P1, Color.RED, ("gunpowder",))
+        .supply(2, ("calendar",))
+        .build()
+    )
+    result = resolve_dogma(
+        state,
+        "self-service",
+        choose_card("gunpowder"),
+        registry=REGISTRY,
+        programs=PROGRAMS,
+    )
+
+    assert CardId("calendar") in result.state.supply.pile(2)
+    assert not result.state.player(P1).score_pile
+
+
+def test_two_nested_gunpowder_executions_do_not_share_a_demand_result() -> None:
+    outer_card = CardId("self-service")
+    outer = EffectProgram(
+        "double-nested-gunpowder-v1",
+        outer_card,
+        (ProgramEffect(DogmaEffectId(outer_card, 1), False, "double-nested"),),
+        (
+            SequenceNode(
+                "double-nested",
+                ("choose-gunpowder", "execute-first", "execute-second"),
+            ),
+            ChoiceNode(
+                "choose-gunpowder",
+                ChoiceKind.CARD,
+                "selected-card",
+                chooser=EXECUTOR,
+                cards=CardSelector.top_cards(EXECUTOR, exclude_source_card=True),
+            ),
+            NestedNode("execute-first", "selected-card"),
+            NestedNode("execute-second", "selected-card"),
+        ),
+    )
+    programs = EffectProgramRegistry(
+        (outer, PROGRAMS.program_for_card(CardId("gunpowder"))),
+        predicates={
+            CardId("gunpowder"): {
+                "own-demand-transferred": PROGRAMS.named_predicate(
+                    CardId("gunpowder"), "own-demand-transferred"
+                )
+            }
+        },
+    )
+    state = (
+        scenario(REGISTRY)
+        .board(P1, Color.GREEN, ("self-service",))
+        .board(P1, Color.RED, ("gunpowder",))
+        .supply(2, ("calendar",))
+        .build()
+    )
+    context = EffectContext(
+        actor=P1,
+        chooser=P1,
+        executor=P1,
+        dogma_activator=P1,
+        source_card_id=outer_card,
+        source_effect_id=None,
+        turn_id=state.turn_number,
+        dogma_action_id=1,
+        scope="double-nested",
+    )
+    paused = start_effect(state, outer.program_id, context, programs, REGISTRY)
+    assert paused.status is EffectStatus.AWAIT_DECISION
+    decision = paused.decision
+    assert decision is not None
+    action = next(
+        action
+        for action in decision.legal_actions
+        if isinstance(action, ChooseCardAction) and action.card_id == CardId("gunpowder")
+    )
+    result = submit_effect_action(paused.state, action, programs, REGISTRY)
+
+    assert result.status is EffectStatus.COMPLETE
+    assert CardId("calendar") in result.state.supply.pile(2)
     assert not result.state.player(P1).score_pile

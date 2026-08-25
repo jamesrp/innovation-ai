@@ -40,6 +40,11 @@ def test_three_selected_cards_with_two_values_score_exactly_two_sevens() -> None
         registry=REGISTRY,
         programs=PROGRAMS,
     )
+    for card_id in (CardId("bicycle"), CardId("combustion")):
+        reward_events = tuple(event for event in result.events if card_id in event.card_ids)
+        assert len(reward_events) == 2
+        assert reward_events[0].atomic_group_id is not None
+        assert len({event.atomic_group_id for event in reward_events}) == 1
     assert set(result.state.player(P1).score_pile) == {CardId("bicycle"), CardId("combustion")}
     assert result.state.player(P1).board.stack(Color.BLUE).cards == (
         CardId("tools"),

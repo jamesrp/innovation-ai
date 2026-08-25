@@ -8,6 +8,7 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
+    BatchNode,
     CardSelector,
     ChoiceKind,
     ChoiceNode,
@@ -76,9 +77,13 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ),
         SequenceNode(
             "draw-then-draw-and-score",
-            ("draw-first-ten", "draw-second-ten", "score-second-ten"),
+            ("draw-first-ten", "draw-and-score-second-ten"),
         ),
         DrawNode("draw-first-ten", ValueRef.literal(10), "first-ten", player=EXECUTOR),
+        BatchNode(
+            "draw-and-score-second-ten",
+            ("draw-second-ten", "score-second-ten"),
+        ),
         DrawNode("draw-second-ten", ValueRef.literal(10), "second-ten", player=EXECUTOR),
         MoveNode(
             "score-second-ten",

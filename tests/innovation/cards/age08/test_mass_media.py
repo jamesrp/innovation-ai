@@ -29,6 +29,7 @@ def test_chosen_value_returns_matching_cards_from_all_score_piles() -> None:
         "mass-media",
         choose_card("tools"),
         choose_value(2),
+        choose_card("currency"),
         registry=REGISTRY,
         programs=PROGRAMS,
     )
@@ -37,6 +38,10 @@ def test_chosen_value_returns_matching_cards_from_all_score_piles() -> None:
     assert {
         action.value for action in value_actions if isinstance(action, ChooseValueAction)
     } == set(range(1, 11))
+    assert result.decisions[2].chooser is P2
+    assert result.state.supply.pile(2).index(CardId("currency")) < result.state.supply.pile(
+        2
+    ).index(CardId("construction"))
     assert result.state.player(P1).score_pile == (CardId("alchemy"),)
     assert result.state.player(P2).score_pile == (CardId("writing"),)
     assert {CardId("canal-building"), CardId("construction"), CardId("currency")} <= set(

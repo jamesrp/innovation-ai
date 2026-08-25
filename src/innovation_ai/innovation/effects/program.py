@@ -480,6 +480,13 @@ class ValueRef:
         return cls(ValueRefKind.NAMED, name=name)
 
 
+class VariableScope(StrEnum):
+    """Scope used for values that must survive one printed-effect boundary."""
+
+    LOCAL = "local"
+    ROOT = "root"
+
+
 class PredicateKind(StrEnum):
     """Supported conditions for branches, repeats, and guards."""
 
@@ -518,6 +525,7 @@ class Predicate:
     match: CardSelector | None = None
     name: str | None = None
     operand: Predicate | None = None
+    variable_scope: VariableScope = VariableScope.LOCAL
 
     def __post_init__(self) -> None:
         variable_kinds = {
@@ -566,8 +574,8 @@ class Predicate:
             raise ValueError("only a negation carries an operand")
 
     @classmethod
-    def truthy(cls, variable: str) -> Predicate:
-        return cls(PredicateKind.VARIABLE_TRUTHY, variable)
+    def truthy(cls, variable: str, *, scope: VariableScope = VariableScope.LOCAL) -> Predicate:
+        return cls(PredicateKind.VARIABLE_TRUTHY, variable, variable_scope=scope)
 
     @classmethod
     def equals(cls, variable: str, expected: str | int | bool) -> Predicate:
@@ -692,6 +700,7 @@ class ChoiceNode:
     minimum_stack_size: int = 0
     owner: PlayerRef | None = None
     color_source: ChoiceColorSource = ChoiceColorSource.EXPLICIT
+    required_splay: SplayDirection | None = None
 
     def __post_init__(self) -> None:
         if self.minimum < 0 or self.maximum < self.minimum:
@@ -709,6 +718,8 @@ class ChoiceNode:
                 raise ValueError("a colour choice needs exactly one option source")
         elif self.color_source is not ChoiceColorSource.EXPLICIT:
             raise ValueError("only a colour choice derives its options from the board")
+        if self.required_splay is not None and self.choice_kind is not ChoiceKind.COLOR:
+            raise ValueError("only a colour choice filters by current splay")
         options = {
             ChoiceKind.PLAYER: bool(self.players),
             ChoiceKind.VALUE: bool(self.values),
@@ -831,6 +842,7 @@ class MoveNode:
     destination_player: PlayerRef | None = None
     destination_zone: ZoneKind | None = None
     result_variable: str | None = None
+    result_scope: VariableScope = VariableScope.LOCAL
     moved_variable: str | None = None
     order_variable: str | None = None
 
@@ -852,6 +864,22 @@ class MoveNode:
                 raise ValueError("transfer requires a player hand, score, or board destination")
         elif self.destination_zone is not None:
             raise ValueError("only transfer carries an explicit destination zone")
+        if self.result_variable is None and self.result_scope is not VariableScope.LOCAL:
+            raise ValueError("a movement result scope requires a result variable")
+
+
+@dataclass(frozen=True, slots=True)
+class CollectNode:
+    """Append one selected card to a deferred, duplicate-free card collection.
+
+    Collection changes only serializable VM bookkeeping. It deliberately creates no gameplay
+    event or achievement boundary, so a quantity-scaled instruction can gather every mandatory
+    choice before committing one grouped movement.
+    """
+
+    node_id: str
+    card_variable: str
+    result_variable: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1061,6 +1089,7 @@ type EffectNode = (
     | RevealNode
     | KeepNode
     | MoveNode
+    | CollectNode
     | ExchangeNode
     | RearrangeNode
     | SplayNode

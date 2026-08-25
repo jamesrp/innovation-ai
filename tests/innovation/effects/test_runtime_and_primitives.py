@@ -370,8 +370,8 @@ def test_reentered_bounded_choice_resets_scope_and_mandatory_partial_finishes() 
 def test_canonical_bounded_selection_never_strands_a_reachable_minimum() -> None:
     state = _state()
     source = CardId("pottery")
-    lower = CardId("tools")
-    higher = CardId("writing")
+    lower = CardId("pottery")
+    higher = CardId("tools")
     program = EffectProgram(
         "test-bounded-minimum-v1",
         source,
