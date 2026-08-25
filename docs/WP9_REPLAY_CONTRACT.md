@@ -13,8 +13,10 @@ transient runtime are rejected.
 
 State schema 2 includes serializable program/node/dogma frames, scoped effect variables, and
 multi-scope physical reveal markers. Observation schema 2 exposes currently revealed identities.
-Decision schema 2 carries demand/shared/nested flags, frozen dogma icon counts, selection bounds,
-and incremental progress. Equal contracts produce byte-identical compact, key-sorted JSON.
+Decision schema 3 carries demand/shared/nested flags, frozen dogma icon counts, selection bounds,
+incremental progress, and an explicit incremental-selection purpose that distinguishes bounded
+subsets from anti-factorial choose-next card ordering. Equal contracts produce byte-identical
+compact, key-sorted JSON.
 
 Loading checks rules and information-policy versions, the packaged card-data fingerprint, card
 conservation, locations, geometry, achievement ownership, and effect-runtime structure. A paused
@@ -50,8 +52,10 @@ replay through the same public transition contract as live agents and runners.
 
 The `effects_fingerprint` is a SHA-256 digest over canonical declarative programs and validated
 named-helper implementations. Any implemented card behavior change invalidates older logs rather
-than allowing a silent state-hash divergence. During staged WP7 rollout, only registered cards are
-offered as Dogma actions; an absent program is a typed error, never a no-op.
+than allowing a silent state-hash divergence. All 105 catalog cards are registered; an absent
+program remains a typed error, never a no-op. Behavior-affecting interpreter or primitive changes
+also require an explicit package engine-version bump because those implementations are outside the
+declarative effects fingerprint.
 
 The recorder begins from explicit setup. Future arbitrary checkpoint logs should add a separately
 versioned initial-state/checkpoint record instead of overloading setup replay.

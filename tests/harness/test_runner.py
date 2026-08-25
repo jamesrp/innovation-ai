@@ -172,7 +172,51 @@ def test_multi_game_records_equal_independent_sequential_runs() -> None:
     assert batched.game_ids == ("a", "b", "c")
 
 
-def test_submit_validates_entire_batch_before_mutating_games() -> None:
+def test_real_batch_records_equal_independent_sequential_runs() -> None:
+    adapter = InnovationEngineAdapter()
+    specs = (GameSpec("real-a", 930), GameSpec("real-b", 931))
+    seeds = {"real-a": (40, 41), "real-b": (50, 51)}
+    batched = PullGameRunner(adapter, specs)
+    agents = {
+        game_id: {player: RandomAgent(values[index]) for index, player in enumerate(PlayerId)}
+        for game_id, values in seeds.items()
+    }
+
+    for _ in range(2500):
+        if len(batched.results()) == len(specs):
+            break
+        pending = batched.pending()
+        assert pending
+        batched.submit(
+            tuple(
+                Submission(
+                    request.game_id,
+                    agents[request.game_id][request.decision.chooser].choose_action(
+                        request.decision
+                    ),
+                )
+                for request in reversed(pending)
+            )
+        )
+    assert len(batched.results()) == len(specs)
+
+    sequential = tuple(
+        SingleGameRunner(adapter, max_actions=2500).run(
+            spec.setup_seed,
+            {
+                player: RandomAgent(seeds[spec.game_id][index])
+                for index, player in enumerate(PlayerId)
+            },
+            game_id=spec.game_id,
+        )
+        for spec in specs
+    )
+    assert tuple(result.record for result in batched.results()) == tuple(
+        result.record for result in sequential
+    )
+    assert tuple(batched.state(spec.game_id) for spec in specs) == tuple(
+        result.state for result in sequential
+    )
     runner = PullGameRunner(SyntheticTerminalEngine(), (GameSpec("a", 907),))
     pending = runner.pending()
     valid = Submission("a", pending[0].decision.legal_actions[0])

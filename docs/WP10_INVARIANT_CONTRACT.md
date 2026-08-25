@@ -1,55 +1,66 @@
-# WP10 invariant and fuzz foundation
+# WP10 invariant and fuzz contract
 
-WP10 adds reusable checks in `innovation.invariants` and deterministic protocol fuzzing in
-`innovation.fuzz`. The foundation intentionally uses only the current WP1-WP3 public contracts
-and does not treat unimplemented card effects as no-ops.
+WP10 provides reusable checks in `innovation.invariants` and deterministic full-protocol fuzzing
+in `innovation.fuzz`. It is integrated with the completed WP1–WP9 engine and the full **105/105**
+card registry; unimplemented card behavior is never treated as a no-op.
 
 ## Available checks
 
-`assert_state_properties` composes the current state-local checks:
+`assert_state_properties` composes state-local checks for:
 
 - card conservation and unique authoritative location;
-- the existing structural zone/fingerprint/achievement checks;
+- structural zone, registry-fingerprint, and achievement ownership consistency;
 - score totals, public score values, and private score identities;
-- frozen icon-slot/splay geometry and owner board observations;
-- phase, active-player, paid-action, and turn consistency;
-- complete deterministic setup and paid-action legal-action sets.
+- icon geometry, splay visibility, and owner board observations;
+- phase, active player, paid actions, turn fields, and reveal markers;
+- automatic special-achievement completion at stable play boundaries;
+- complete deterministic setup, paid-action, and effect-choice legal-action sets;
+- terminal immutability across every public mutation entry point.
 
 Transition helpers are `assert_transition_purity`, `assert_turn_progression`,
-`assert_transition_consistency`, and `checked_apply_action`. Hidden-equivalent state pairs can be
-checked with `assert_observation_leak_resistance`. `assert_terminal_immutability` probes every
-current public zone mutation entry point plus `apply_action` and requires typed rejection without
-a state/hash change.
+`assert_transition_consistency`, and `checked_apply_action`. Effect choices have exact progression
+rules: they never consume another paid action, preserve the current turn while work remains, and
+may rotate only when the already-paid Dogma action completes. Hidden-equivalent state pairs use
+`assert_observation_leak_resistance`; targeted tests cover supply order, achievements, hands,
+scores, and covered boards.
 
-`run_protocol_fuzz(seed)` deterministically chooses legal setup and Draw/Meld/Achieve actions,
-checks every transition, records before/after hashes, enforces a step ceiling, and must terminate.
-Dogma actions remain in legal-action completeness checks but are not selected because WP3 only
-creates a placeholder frame. Small golden trace digests pin deterministic behavior.
+Replay invokes state-local checks at the restored initial boundary and after every replayed action,
+in addition to verifying recorded decisions and hashes. A seeded setup-to-terminal log test
+contains real Dogma and nested effect choices. Runner integration compares real multi-game batch
+records and final states with independent sequential runs using independently seeded agents.
 
-The default fuzz coverage is fast. Run a larger deterministic batch explicitly with:
+## Deterministic fuzzing
+
+`run_protocol_fuzz(seed)` chooses among every legal setup, Draw, Meld, Dogma, Achieve, and effect
+choice action. It checks the initial state and every transition, records before/after hashes,
+enforces a step ceiling, and must terminate. Small golden trace digests pin deliberate semantic
+behavior changes.
+
+The default suite keeps a fast deterministic fuzz sample. The release-scale gate is:
 
 ```bash
-INNOVATION_LARGE_FUZZ_SEEDS=100 uv run pytest -m fuzz tests/innovation/test_fuzz.py
+INNOVATION_LARGE_FUZZ_SEEDS=100 uv run pytest -q -m fuzz tests/innovation/test_fuzz.py
 ```
 
-## Integration requirements
+The latest integration run on August 25, 2026 completed all 100 seeds: `4 passed, 1 deselected`
+in 143.68 seconds for the command above.
 
-- **WP4:** extend legal-action completeness to effect decisions and teach the fuzzer how to resume
-  pending frames. Effect-choice transitions must get progression rules distinct from paid actions;
-  do not route them through the current paid-action decrement assertion unchanged.
-- **WP5:** enable Dogma selection in fuzzing only after orchestration can run to the next decision
-  or terminal boundary. Preserve input purity and validate frozen icon eligibility separately from
-  live board icon geometry.
-- **WP6:** add automatic/special achievement consistency checks and run terminal immutability after
-  every terminal route. If intentional achievement timing changes non-Dogma golden traces, review
-  and update their digests rather than deleting them.
-- **WP7:** card effects must use shared mutation APIs or add their new public mutation entry points
-  to terminal-immutability probing. Full Dogma fuzzing must fail loudly for missing registrations.
-- **WP8:** runners may use `checked_apply_action` in debug/test mode. Agent randomness must remain
-  separate from setup and protocol-fuzzer RNG seeds.
-- **WP9:** replay should call state-local checks at restored boundaries and compare recorded hashes.
-  Serialization must preserve fuzz steps' semantic actions and terminal result; add round-trip and
-  replay checks without coupling the invariant module to log schemas.
+The fuzzer checks player-safe observations on every generated state. Strong noninterference claims
+still belong to the focused hidden-equivalent-pair tests; random play does not synthesize a second
+paired authoritative state at each transition.
 
-When downstream contracts add legitimate phases, decisions, terminal reasons, or mutation APIs,
-extend these exhaustive checks in the same change. Do not weaken them to accept an unknown case.
+## Maintenance requirements
+
+- New effect choices or protocol phases must extend legal-action completeness and exact turn
+  progression in the same change.
+- New public mutation entry points must be added to terminal-immutability probing.
+- Card programs must use shared declarative mutation APIs and remain covered by the all-card
+  minimum-state smoke gate.
+- Intentional semantic changes may update golden traces only after focused rules regressions prove
+  the new behavior.
+- Replay schema/fingerprint/version changes must remain explicit and fail incompatibly rather than
+  diverging silently.
+- Agent randomness stays separate from setup and protocol-fuzzer RNG seeds.
+
+Do not weaken an invariant to accept an unknown state. Either extend the exhaustive contract for a
+legitimate new case or fix the production transition that violated it.

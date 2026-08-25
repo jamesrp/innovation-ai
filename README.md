@@ -5,15 +5,15 @@ reliable play between basic agents and later for self-play and PyTorch research.
 
 ## Current milestone
 
-**Milestone 1:** implement the complete rules engine for all 105 supplied cards. Every setup,
-turn, and nested card-effect choice will be exposed as a serializable first-class decision, with
-strict separation between authoritative state and player-visible observations.
+**Milestone 1:** complete deterministic rules engine for all 105 supplied cards. Every setup,
+turn, and nested card-effect choice is exposed as a serializable first-class decision, with strict
+separation between authoritative state and player-visible observations.
 
-The engine foundation now includes the validated catalog/state/protocol layers, resumable WP4/WP5
-effects and public Dogma integration, WP6 achievement/terminal handling, basic agents/runners,
-versioned serialization/log/replay, invariants, and deterministic fuzzing. Freeze B is complete for
-the shared runtime plus a six-card vertical slice; the exact 99-card WP7 breadth gap is listed in
-`docs/WP5_FREEZE_B_CONTRACT.md`.
+The engine includes the validated catalog/state/protocol layers, resumable effects and public
+Dogma integration, achievement/terminal handling, all **105/105** card programs and all **158/158**
+printed effects, basic agents and pull runners, versioned serialization/log/replay, reusable
+invariants, and deterministic full-Dogma fuzzing. Missing registrations fail loudly rather than
+acting as no-ops.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`
@@ -32,7 +32,8 @@ the shared runtime plus a six-card vertical slice; the exact 99-card WP7 breadth
 ```bash
 make install       # Core package and development tools
 make install-ai    # Also install NumPy and CPU-only PyTorch for later milestones
-make check         # Lint, type-check, and test
+make check         # Lint, type-check, and full default test/coverage gate
+INNOVATION_LARGE_FUZZ_SEEDS=100 uv run pytest -q -m fuzz tests/innovation/test_fuzz.py
 make run           # Verify the environment
 ```
 

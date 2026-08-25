@@ -1,8 +1,9 @@
-# WP5 Freeze-B Contract and Vertical Slice
+# WP5 Freeze-B Contract and Completed Card Integration
 
-**Status:** coherent Freeze-B subset completed on August 25, 2026.  This freezes the shared dogma,
-effect, decision, achievement, serialization, and registry contracts needed by later WP7 card
-waves. It does **not** claim Milestone 1 card coverage: six cards are implemented and 99 remain.
+**Status:** Freeze B completed on August 25, 2026, and the downstream WP7 integration is now
+complete. The shared dogma, effect, decision, achievement, serialization, and registry contracts
+support **105/105 cards** and **158/158 printed effects**. The original six-card vertical slice
+below is retained as historical validation context, not as current coverage.
 
 ## Public transition boundary
 
@@ -17,9 +18,10 @@ Normal protocol calls always return a decision or terminal result. Low-level `st
 loading one of those checkpoints, call `resume_pending_effects()` before asking the public
 protocol for a decision.
 
-Only top cards in `implemented_card_ids()` are offered as Dogma actions during the staged WP7
-rollout. Directly requesting an unimplemented card raises `UnimplementedCardError`; missing card
-behavior never becomes a silent no-op.
+All catalog top cards are offered as Dogma actions because all 105 programs are registered.
+`implemented_card_ids()` remains the authoritative completeness gate, and directly requesting an
+absent program still raises `UnimplementedCardError`; missing behavior can never become a silent
+no-op.
 
 ## Dogma orchestration
 
@@ -91,7 +93,7 @@ nodes, and hashes canonical programs plus inspectable named-helper implementatio
 Game-log schema version 2 records `effects_fingerprint` beside the card-data fingerprint. Replay
 rejects either fingerprint when incompatible.
 
-## Implemented six-card vertical slice
+## Historical six-card validation slice
 
 - `the-wheel`: times/draw, opponent-first sharing, one free Draw;
 - `code-of-laws`: relational optional tuck, `if you do`, dynamic-color optional splay;
@@ -104,32 +106,16 @@ Focused suites exercise serialize/restore checkpoints, public observations, dema
 atomic claim and terminal interruption, ordering, hidden selection, nested attribution/depth, and
 registry discovery/fingerprints.
 
-## Exact remaining WP7 breadth
+## Current WP7 breadth status
 
-The following 99 cards have no production effect program yet and therefore are not offered as
-Dogma actions:
+All ten age packages are integrated. The production registry contains all **105/105** catalog
+cards, all **158/158** printed effects have declarative implementations, and there are no
+production `NoOpNode` placeholders. Focused card suites, the all-card minimum-state smoke test,
+full-Dogma log/replay, real batch-versus-sequential runner coverage, and deterministic protocol
+fuzzing exercise the completed registry.
 
-- **Age 1 (10):** agriculture, city-states, clothing, domestication, masonry, mysticism, oars,
-  sailing, tools, writing.
-- **Age 2 (10):** calendar, canal-building, construction, currency, fermenting, mapmaking,
-  mathematics, monotheism, philosophy, road-building.
-- **Age 3 (10):** alchemy, compass, education, engineering, feudalism, machinery, medicine,
-  optics, paper, translation.
-- **Age 4 (10):** anatomy, colonialism, enterprise, experimentation, gunpowder, invention,
-  navigation, perspective, printing-press, reformation.
-- **Age 5 (10):** astronomy, banking, chemistry, coal, measurement, physics, societies,
-  statistics, steam-engine, the-pirate-code.
-- **Age 6 (10):** atomic-theory, canning, classification, democracy, emancipation, encyclopedia,
-  industrialization, machine-tools, metric-system, vaccination.
-- **Age 7 (10):** bicycle, combustion, electricity, evolution, explosives, lighting,
-  publications, railroad, refrigeration, sanitation.
-- **Age 8 (10):** antibiotics, corporations, empiricism, flight, mass-media, mobility,
-  quantum-theory, rocketry, skyscrapers, socialism.
-- **Age 9 (9):** collaboration, composites, computers, ecology, genetics, satellites, services,
-  specialization, suburbia.
-- **Age 10 (10):** a-i, bioengineering, databases, globalization, miniaturization, robotics,
-  self-service, software, stem-cells, the-internet.
+The release-scale deterministic fuzz gate is:
 
-These are card-data breadth, not missing shared Freeze-B mechanisms. Milestone 1 still requires all
-99 modules, focused card tests, complete-card fuzzing, and the final 105-card registry coverage
-check.
+```bash
+INNOVATION_LARGE_FUZZ_SEEDS=100 uv run pytest -q -m fuzz tests/innovation/test_fuzz.py
+```

@@ -1,5 +1,10 @@
 # Milestone 1 Plan — Complete Innovation Game Engine
 
+**Current status (August 25, 2026):** all **105/105** cards and **158/158** printed effects are
+integrated. The milestone quality gate includes focused card regressions, all-card minimum-state
+smoke coverage, full-Dogma replay, real runner batch/sequential equivalence, `make check`, and the
+100-seed deterministic fuzz command documented below.
+
 ## 1. Milestone contract
 
 Milestone 1 delivers a complete deterministic engine for the supplied two-player Innovation
@@ -307,9 +312,9 @@ identical state hash.
 
 ### WP5 — Dogma orchestration
 
-**Freeze-B subset status (August 25, 2026): complete.** The shared runtime contract and six-card
-vertical slice are documented in `docs/WP5_FREEZE_B_CONTRACT.md`; the remaining 99 production
-card programs stay in WP7 scope.
+**Freeze-B status (August 25, 2026): complete.** The shared runtime contract and its historical
+six-card validation slice are documented in `docs/WP5_FREEZE_B_CONTRACT.md`. Downstream WP7 card
+integration is also complete at **105/105** cards and **158/158** effects.
 
 **Dependencies:** WP4. **Parallelism:** one owner, often the WP4 owner.
 
@@ -344,9 +349,9 @@ count for Monument; same-special simultaneous eligibility follows active-player 
 exhaustion uses score then achievement count then draw.
 
 **Freeze point B:** the shared primitive/effect signatures and behavior are frozen by
-`docs/WP5_FREEZE_B_CONTRACT.md`. Card agents may now fan out; contract changes return to the
-owning work package instead of being improvised. The freeze does not waive the 99 unimplemented
-WP7 card programs listed in that document.
+`docs/WP5_FREEZE_B_CONTRACT.md`. Card capability requests return to the owning work package
+instead of being improvised; the completed registry proves the frozen surface across all 105
+cards.
 
 ### WP7 — Card implementations, waves 1–7
 
@@ -457,8 +462,9 @@ Deliverables:
 - deterministic random-vs-random fuzzing over many seeds;
 - small golden game records.
 
-Acceptance: default suite remains fast; a larger marked fuzz run completes without engine errors,
-state-hash divergence, leaked observations, or step-ceiling hangs.
+Acceptance: default suite remains fast; the marked 100-seed full-Dogma fuzz run completes without
+engine errors, state-hash divergence, or step-ceiling hangs. Focused hidden-equivalence tests own
+the stronger paired-state leak checks.
 
 ## 6. Dependency graph and parallel handoff
 

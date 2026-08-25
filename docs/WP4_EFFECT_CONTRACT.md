@@ -1,9 +1,8 @@
 # WP4 effect contract
 
 WP4 implements card behavior as explicit declarative programs interpreted by
-`innovation_ai.innovation.effects`. It does not register the 105 production card programs; the
-named Pottery, Metalworking, Machinery, Publications, Fission, and Self Service programs are
-synthetic specification fixtures for the shared VM only.
+`innovation_ai.innovation.effects`. The contract was frozen using six representative fixtures and
+is now the production runtime for all 105 registered card programs.
 
 ## Resumption boundary
 
@@ -46,11 +45,18 @@ boolean result, allowing explicit `if you do` conditions without inspecting tran
 
 ## Primitive surface
 
-The declarative node set freezes shared sequence, card movement, draw/reveal/keep, exchange,
-splay, rearrangement, choice, condition, repeat, atomic batch, nested non-demand execution,
-mass-removal, no-op, and dogma-abort behavior. Choice nodes map to WP3 semantic action types and
-separate chooser from executor. Bounded card selection is incremental and uses
-`FinishSelectionAction`; arbitrary rearrangement uses `OrderCardsAction` as required by Freeze A.
+The declarative node set freezes shared sequence, card movement, deferred mandatory collection,
+draw/reveal/keep, exchange, splay, rearrangement, choice, condition, repeat, atomic batch, nested
+non-demand execution, mass-removal, no-op, and dogma-abort behavior. Choice nodes map to WP3
+semantic action types and separate chooser from executor. Bounded subsets use canonical
+incremental `ChooseCardAction` plus `FinishSelectionAction`.
+
+`ORDER_CARDS` deliberately also uses an anti-factorial choose-next protocol: each decision offers
+`ChooseCardAction` for the next position instead of enumerating `k!` complete
+`OrderCardsAction` permutations. `DecisionContext.incremental_selection == "card-order"` and
+`selected_so_far` make those decisions semantically distinct from ordinary card choices and
+bounded subset construction. `OrderCardsAction` remains a versioned general protocol type, but
+the effect VM does not emit it for incremental ordering.
 
 ## Integration boundary
 

@@ -184,12 +184,12 @@ recorded in `docs/ROADMAP.md`.
 **Tests:** decision while cards remain face-up; reveal marker cleared on keep/return/score;
 subsequent decision does not leak a now-hidden identity.
 
-## Freeze-B implementation status
+## Freeze-B and card-integration status
 
-The shared mechanisms required by decisions 2–7 and 10–18 are frozen in
-`docs/WP5_FREEZE_B_CONTRACT.md` as of August 25, 2026. Six production cards exercise the vertical
-slice; the 99-card WP7 breadth gap is enumerated there and is not silently treated as no-op
-behavior.
+The shared mechanisms required by decisions 2–7 and 10–18 were frozen in
+`docs/WP5_FREEZE_B_CONTRACT.md` on August 25, 2026. The subsequent WP7 breadth work is complete:
+all **105/105** cards and **158/158** printed effects are registered, tested, and never silently
+replaced by no-op behavior.
 
 ## Contract implications discovered during review
 

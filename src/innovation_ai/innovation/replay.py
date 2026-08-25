@@ -13,6 +13,7 @@ from innovation_ai.innovation.actions import (
 )
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.effects.registry import effects_fingerprint
+from innovation_ai.innovation.invariants import InvariantViolation, assert_state_properties
 from innovation_ai.innovation.logs import (
     ENGINE_VERSION,
     GAME_LOG_FORMAT,
@@ -175,6 +176,10 @@ def replay_game_log(
     selected_adapter = adapter or DefaultReplayAdapter()
     check_game_log_compatibility(log, registry)
     state = selected_adapter.initial_state(log.setup, registry)
+    try:
+        assert_state_properties(state, registry)
+    except InvariantViolation as error:
+        raise ReplayDivergenceError(f"initial state invariant failed: {error}") from error
     actual_initial_hash = state_hash(state)
     if actual_initial_hash != log.initial_state_hash:
         raise ReplayDivergenceError(
@@ -195,7 +200,8 @@ def replay_game_log(
             )
         try:
             state = selected_adapter.apply(state, entry.action, registry)
-        except (InnovationEngineError, ValueError) as error:
+            assert_state_properties(state, registry)
+        except (InnovationEngineError, ValueError, InvariantViolation) as error:
             raise ReplayDivergenceError(
                 f"transition {entry.sequence}: action application failed: {error}"
             ) from error

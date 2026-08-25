@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from innovation_ai.innovation.actions import DogmaAction
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.effects import (
     effects_fingerprint,
@@ -73,7 +75,25 @@ def test_play_log_round_trip_replays_every_state_hash(tmp_path: Path) -> None:
     assert state_hash(result.state) == loaded.final_state_hash
 
 
-def test_a_mid_dogma_log_round_trips_and_replays_to_the_same_decision() -> None:
+def test_seeded_full_dogma_log_replays_every_decision_and_hash() -> None:
+    recorder = GameLogRecorder(build_setup_state(1000))
+    rng = random.Random(10999)
+    for _ in range(800):
+        decisions = recorder.decisions()
+        if not decisions:
+            break
+        decision = decisions[0]
+        recorder.submit(rng.choice(decision.legal_actions))
+
+    log = recorder.game_log()
+    assert log.terminal_result is not None
+    assert any(isinstance(entry.action, DogmaAction) for entry in log.transitions)
+    assert any(entry.decision.context is not None for entry in log.transitions)
+
+    replayed = replay_game_log(loads_game_log(dumps_game_log(log)))
+    assert replayed.transitions_replayed == log.transition_count
+    assert replayed.state == recorder.state
+    assert state_hash(replayed.state) == log.final_state_hash
     """A dogma action that pauses on a choice is an ordinary decision boundary."""
 
     registry = load_card_registry()

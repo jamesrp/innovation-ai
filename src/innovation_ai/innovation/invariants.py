@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 
+from innovation_ai.innovation.achievements import automatically_eligible_special_achievements
 from innovation_ai.innovation.actions import (
     AchieveAction,
     ChooseStartingMeldAction,
@@ -456,12 +457,32 @@ def assert_turn_progression(
             after.next_dogma_action_id == before.next_dogma_action_id,
             "an effect choice started a new dogma action",
         )
-        _require(
-            after.paid_actions_remaining >= before.paid_actions_remaining,
-            "an effect choice consumed a paid action",
-        )
-        _require(after.turn_number >= before.turn_number, "turn number moved backwards")
-        _require(after.turn_number <= before.turn_number + 1, "an effect choice skipped a turn")
+        _require(after.next_event_id >= before.next_event_id, "event ID moved backwards")
+        if after.phase is GamePhase.TERMINAL or after.pending_effects:
+            _require(
+                after.active_player is before.active_player,
+                "unfinished or terminal effect choice changed active player",
+            )
+            _require(after.turn_number == before.turn_number, "effect choice advanced the turn")
+            _require(
+                after.paid_actions_remaining == before.paid_actions_remaining,
+                "effect choice changed paid actions before completion",
+            )
+        elif after.active_player is before.active_player:
+            _require(after.turn_number == before.turn_number, "same player advanced the turn")
+            _require(
+                after.paid_actions_remaining == before.paid_actions_remaining,
+                "completed effect choice changed the remaining paid actions",
+            )
+        else:
+            _require(
+                after.turn_number == before.turn_number + 1,
+                "completed effect choice rotated without advancing the turn",
+            )
+            _require(
+                after.paid_actions_remaining == 2,
+                "completed effect choice did not initialize the next turn",
+            )
         return
 
     _require(after.next_decision_id == before.next_decision_id + 1, "decision ID did not advance")
@@ -570,6 +591,22 @@ def assert_terminal_immutability(state: GameState, registry: CardRegistry | None
         assert_transition_purity(state, snapshot)
 
 
+def assert_automatic_achievement_consistency(
+    state: GameState, registry: CardRegistry | None = None
+) -> None:
+    """Require stable play boundaries to have claimed every automatic special achievement."""
+
+    if state.phase is not GamePhase.PLAY:
+        return
+    registry = registry or load_card_registry()
+    for player_id in PlayerId:
+        eligible = automatically_eligible_special_achievements(state, player_id, registry)
+        _require(
+            not eligible,
+            f"automatic special achievements remain unclaimed for {player_id}: {eligible}",
+        )
+
+
 def assert_state_properties(
     state: GameState,
     registry: CardRegistry | None = None,
@@ -588,7 +625,10 @@ def assert_state_properties(
     assert_icon_geometry(state, registry)
     assert_turn_consistency(state)
     assert_revealed_consistency(state)
+    assert_automatic_achievement_consistency(state, registry)
     assert_legal_action_completeness(state, registry, programs=programs)
+    if state.phase is GamePhase.TERMINAL:
+        assert_terminal_immutability(state, registry)
 
 
 def assert_revealed_consistency(state: GameState) -> None:
