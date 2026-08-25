@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from innovation_ai.innovation.actions import DogmaAction
+from innovation_ai.innovation.catalog import load_card_registry
+from innovation_ai.innovation.effects import (
+    effects_fingerprint,
+    load_effect_programs,
+    start_dogma,
+)
 from innovation_ai.innovation.logs import (
     GameLog,
     GameLogError,
@@ -16,6 +21,7 @@ from innovation_ai.innovation.logs import (
     loads_game_log,
     save_game_log,
 )
+from innovation_ai.innovation.protocol import current_decisions
 from innovation_ai.innovation.replay import (
     GameLogRecorder,
     ReplayCompatibilityError,
@@ -23,7 +29,14 @@ from innovation_ai.innovation.replay import (
     ReplayRecordingError,
     replay_game_log,
 )
-from innovation_ai.innovation.state import build_setup_state, state_hash
+from innovation_ai.innovation.serialization import dumps_state, loads_state
+from innovation_ai.innovation.state import (
+    ExplicitPlayerPosition,
+    build_explicit_state,
+    build_setup_state,
+    state_hash,
+)
+from innovation_ai.innovation.types import CardId, Color, PlayerId
 
 
 def _complete_log(seed: int = 1001) -> GameLog:
@@ -60,21 +73,46 @@ def test_play_log_round_trip_replays_every_state_hash(tmp_path: Path) -> None:
     assert state_hash(result.state) == loaded.final_state_hash
 
 
-def test_pending_effect_log_round_trips_for_later_wp4_resume() -> None:
-    recorder = GameLogRecorder(build_setup_state(1002))
-    recorder.submit(recorder.decisions()[0].legal_actions[0])
-    recorder.submit(recorder.decisions()[0].legal_actions[0])
-    turn_decision = recorder.decisions()[0]
-    dogma = next(
-        action for action in turn_decision.legal_actions if isinstance(action, DogmaAction)
-    )
-    recorder.submit(dogma)
+def test_a_mid_dogma_log_round_trips_and_replays_to_the_same_decision() -> None:
+    """A dogma action that pauses on a choice is an ordinary decision boundary."""
 
-    log = loads_game_log(dumps_game_log(recorder.game_log()))
-    assert log.final_outcome is ReplayOutcome.EFFECT_RESOLUTION_PENDING
-    result = replay_game_log(log)
-    assert result.state.pending_effects
-    assert result.outcome is ReplayOutcome.EFFECT_RESOLUTION_PENDING
+    registry = load_card_registry()
+    programs = load_effect_programs()
+    state = build_explicit_state(
+        registry,
+        positions=(
+            (
+                PlayerId.PLAYER_1,
+                ExplicitPlayerPosition(
+                    board=((Color.PURPLE, (CardId("code-of-laws"),)),),
+                    hand=(CardId("city-states"),),
+                ),
+            ),
+            (
+                PlayerId.PLAYER_2,
+                ExplicitPlayerPosition(board=((Color.BLUE, (CardId("pottery"),)),)),
+            ),
+        ),
+    )
+    paused = start_dogma(state, CardId("code-of-laws"), PlayerId.PLAYER_1, programs, registry).state
+    assert paused.pending_effects
+    decisions = current_decisions(paused, registry, programs)
+    assert len(decisions) == 1
+
+    encoded = dumps_state(paused)
+    restored = loads_state(encoded, registry)
+    assert state_hash(restored) == state_hash(paused)
+    assert current_decisions(restored, registry, programs) == decisions
+
+
+def test_the_effects_fingerprint_is_recorded_and_verified() -> None:
+    log = _complete_log(1020)
+    assert log.effects_fingerprint == effects_fingerprint()
+    payload = json.loads(dumps_game_log(log))
+    payload["effects_fingerprint"] = "sha256:" + "0" * 64
+    tampered = loads_game_log(json.dumps(payload))
+    with pytest.raises(ReplayCompatibilityError, match="effects fingerprint"):
+        replay_game_log(tampered)
 
 
 def test_edited_action_or_hash_fails_loudly() -> None:

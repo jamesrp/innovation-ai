@@ -6,6 +6,7 @@ import pytest
 
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.state import (
+    STATE_SCHEMA_VERSION,
     Board,
     ColorStack,
     EffectFrameState,
@@ -68,7 +69,7 @@ def test_state_clone_payload_and_hash_are_deterministic_and_detached() -> None:
     assert state_hash(clone) == state_hash(state)
     assert state_hash(build_setup_state(42)) == state_hash(state)
     payload = state_payload(state)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == STATE_SCHEMA_VERSION
     assert payload["phase"] == "starting-melds"
     assert payload["setup"]["seed"] == 42  # type: ignore[index]
 

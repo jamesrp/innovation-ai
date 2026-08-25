@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import random
+import re
 from dataclasses import dataclass, fields, is_dataclass
 from enum import StrEnum
 
@@ -21,9 +22,10 @@ from innovation_ai.innovation.types import (
 
 RULES_VERSION = "innovation-base-third-edition-2p-v1"
 INFORMATION_POLICY_VERSION = "rulebook-private-covered-v1"
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 TERMINAL_SCHEMA_VERSION = 1
 SETUP_RNG_VERSION = "python-mt19937-shuffle-v1"
+_REVEAL_SCOPE_PART = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 type StateScalar = str | int | bool | None
 type StateValue = StateScalar | tuple[StateValue, ...]
@@ -270,6 +272,25 @@ class EffectFrameState:
 
 
 @dataclass(frozen=True, slots=True)
+class RevealedCard:
+    """One card that is literally face up right now, per rules decision 18.
+
+    A reveal marker is *physical*: it exists only while the revealing instruction keeps the card
+    face up. ``scope`` is the effect scope that revealed it, so clearing that scope also clears
+    the marker, and moving or keeping the card clears it immediately.
+    """
+
+    card_id: CardId
+    scope: str
+
+    def __post_init__(self) -> None:
+        if not self.scope or any(
+            _REVEAL_SCOPE_PART.fullmatch(part) is None for part in self.scope.split("/")
+        ):
+            raise ValueError(f"invalid reveal scope: {self.scope!r}")
+
+
+@dataclass(frozen=True, slots=True)
 class SetupProvenance:
     """Random setup inputs and explicit shuffled order for exact replay."""
 
@@ -320,6 +341,7 @@ class GameState:
     turn_counters: TurnCounters
     pending_effects: tuple[EffectFrameState, ...]
     effect_variables: tuple[EffectVariable, ...]
+    revealed: tuple[RevealedCard, ...]
     starting_meld_decision_ids: tuple[int, int]
     starting_meld_choices: tuple[CardId | None, CardId | None]
     next_decision_id: int
@@ -359,13 +381,28 @@ class GameState:
             frame_names = tuple(variable.name for variable in frame.variables)
             if len(set(frame_names)) != len(frame_names):
                 raise ValueError("effect frame variable names must be unique")
-        if self.phase is GamePhase.TERMINAL and self.terminal_result is None:
-            raise ValueError("terminal phase requires a terminal result")
-        if self.phase is not GamePhase.TERMINAL and self.terminal_result is not None:
+        if self.phase is GamePhase.TERMINAL:
+            if self.terminal_result is None:
+                raise ValueError("terminal phase requires a terminal result")
+            if self.pending_effects or self.effect_variables or self.revealed:
+                raise ValueError("a terminal state cannot retain transient effect runtime")
+        elif self.terminal_result is not None:
             raise ValueError("non-terminal state cannot have a terminal result")
         if len(set(self.removed_cards)) != len(self.removed_cards):
             raise ValueError("removed cards cannot be duplicated")
         object.__setattr__(self, "removed_cards", tuple(sorted(self.removed_cards, key=str)))
+        markers = tuple(sorted(self.revealed, key=lambda item: (item.card_id.value, item.scope)))
+        if len(set(markers)) != len(markers):
+            raise ValueError("reveal markers cannot repeat a card/scope pair")
+        object.__setattr__(self, "revealed", markers)
+        if self.revealed and not self.pending_effects:
+            raise ValueError("reveal markers require pending effect runtime")
+
+    @property
+    def revealed_card_ids(self) -> frozenset[CardId]:
+        """Return every card that is currently face up under a resolving instruction."""
+
+        return frozenset(marker.card_id for marker in self.revealed)
 
     def player(self, player_id: PlayerId) -> PlayerState:
         """Return one player's authoritative state."""
@@ -443,6 +480,7 @@ def build_setup_state_from_piles(
         turn_counters=TurnCounters.empty(),
         pending_effects=(),
         effect_variables=(),
+        revealed=(),
         starting_meld_decision_ids=(1, 2),
         starting_meld_choices=(None, None),
         next_decision_id=3,
@@ -465,6 +503,173 @@ def clone_state(state: GameState) -> GameState:
     """Return a detached, equal clone suitable for speculative transitions."""
 
     return copy.deepcopy(state)
+
+
+@dataclass(frozen=True, slots=True)
+class ExplicitPlayerPosition:
+    """One player's explicitly requested zones for a constructed mid-game position.
+
+    ``board`` maps a color to its bottom-to-top card order; only listed colors are populated.
+    ``splays`` requests a direction for a listed color and is silently collapsed for stacks of
+    fewer than two cards, matching rules decision 14.
+    """
+
+    hand: tuple[CardId, ...] = ()
+    score_pile: tuple[CardId, ...] = ()
+    board: tuple[tuple[Color, tuple[CardId, ...]], ...] = ()
+    splays: tuple[tuple[Color, SplayDirection], ...] = ()
+    normal_achievements: tuple[NormalAchievementId, ...] = ()
+    special_achievements: tuple[SpecialAchievementId, ...] = ()
+
+    @property
+    def used_cards(self) -> tuple[CardId, ...]:
+        """Return every card this position explicitly places, in declaration order."""
+
+        return (
+            *self.hand,
+            *self.score_pile,
+            *(card_id for _, cards in self.board for card_id in cards),
+        )
+
+
+EXPLICIT_SETUP_SEED = -1
+
+
+def build_explicit_state(
+    registry: CardRegistry | None = None,
+    *,
+    positions: tuple[tuple[PlayerId, ExplicitPlayerPosition], ...] = (),
+    supply_tops: tuple[tuple[int, tuple[CardId, ...]], ...] = (),
+    removed_cards: tuple[CardId, ...] = (),
+    phase: GamePhase = GamePhase.PLAY,
+    active_player: PlayerId | None = PlayerId.PLAYER_1,
+    turn_number: int = 3,
+    paid_actions_remaining: int = 2,
+    turn_counters: TurnCounters | None = None,
+    next_decision_id: int = 10,
+    next_event_id: int = 1,
+    next_dogma_action_id: int = 1,
+) -> GameState:
+    """Build an arbitrary validated mid-game position for focused rule and card tests.
+
+    Every card not explicitly placed stays in its age supply. Ages 1-9 each keep one hidden
+    normal-achievement card, chosen as the lowest unused card ID of that age so the result is
+    deterministic. ``supply_tops`` moves named cards to the top of their own age pile so a draw
+    is predictable. The returned state passes :func:`assert_state_invariants`, so tests never
+    hand-mutate frozen dataclasses.
+    """
+
+    registry = registry or load_card_registry()
+    requested = dict(positions)
+    if len(requested) != len(positions):
+        raise ValueError("explicit positions must name each player at most once")
+    unknown = set(requested) - set(PlayerId)
+    if unknown:
+        raise ValueError(f"explicit positions contain unknown players: {sorted(unknown)}")
+
+    placed: list[CardId] = list(removed_cards)
+    for player_id in PlayerId:
+        placed.extend(requested.get(player_id, ExplicitPlayerPosition()).used_cards)
+    if len(set(placed)) != len(placed):
+        raise ValueError("a card cannot be placed in two explicit locations")
+    for card_id in placed:
+        registry.card(card_id)
+
+    used = set(placed)
+    tops = dict(supply_tops)
+    if len(tops) != len(supply_tops):
+        raise ValueError("supply tops must name each age at most once")
+    # Named supply tops are reserved before the hidden achievements are drawn, so asking for a
+    # predictable draw never silently competes with achievement selection.
+    for age, ordered in tops.items():
+        for card_id in ordered:
+            if registry.card(card_id).age != age:
+                raise ValueError(f"card {card_id} cannot top the age {age} supply")
+            if card_id in used:
+                raise ValueError(f"card {card_id} is already placed elsewhere")
+            used.add(card_id)
+
+    achievement_cards: list[CardId] = []
+    for age in range(1, 10):
+        candidates = sorted(
+            (card.id for card in registry.cards if card.age == age and card.id not in used),
+            key=str,
+        )
+        if not candidates:
+            raise ValueError(f"age {age} has no card left for its normal achievement")
+        achievement_cards.append(candidates[0])
+        used.add(candidates[0])
+
+    piles: list[tuple[CardId, ...]] = []
+    for age in range(1, 11):
+        remaining = sorted(
+            (card.id for card in registry.cards if card.age == age and card.id not in used),
+            key=str,
+        )
+        piles.append((*tops.get(age, ()), *remaining))
+
+    players: list[PlayerState] = []
+    for player_id in PlayerId:
+        position = requested.get(player_id, ExplicitPlayerPosition())
+        splays = dict(position.splays)
+        board_cards = dict(position.board)
+        stacks: list[ColorStack] = []
+        for color in Color:
+            cards = board_cards.get(color, ())
+            for card_id in cards:
+                if registry.card(card_id).color is not color:
+                    raise ValueError(f"card {card_id} cannot enter the {color} stack")
+            direction = splays.get(color, SplayDirection.NONE)
+            stacks.append(
+                ColorStack(
+                    color,
+                    cards,
+                    direction if len(cards) >= 2 else SplayDirection.NONE,
+                )
+            )
+        players.append(
+            PlayerState(
+                player_id,
+                position.hand,
+                Board(tuple(stacks)),
+                position.score_pile,
+                position.normal_achievements,
+                position.special_achievements,
+            )
+        )
+
+    state = GameState(
+        supply=SupplyState(tuple(piles)),
+        players=(players[0], players[1]),
+        normal_achievements=NormalAchievementState(tuple(achievement_cards)),
+        removed_cards=removed_cards,
+        phase=phase,
+        active_player=active_player,
+        turn_number=turn_number,
+        paid_actions_remaining=paid_actions_remaining,
+        turn_counters=turn_counters or TurnCounters.empty(),
+        pending_effects=(),
+        effect_variables=(),
+        revealed=(),
+        starting_meld_decision_ids=(1, 2),
+        starting_meld_choices=(None, None),
+        next_decision_id=next_decision_id,
+        next_event_id=next_event_id,
+        next_dogma_action_id=next_dogma_action_id,
+        setup=SetupProvenance(
+            EXPLICIT_SETUP_SEED,
+            registry.data_fingerprint,
+            tuple(
+                tuple(sorted((card.id for card in registry.cards if card.age == age), key=str))
+                for age in range(1, 11)
+            ),
+            tuple(player_id for _ in range(2) for player_id in PlayerId),
+        ),
+    )
+    from innovation_ai.innovation.zones import assert_state_invariants
+
+    assert_state_invariants(state, registry)
+    return state
 
 
 def _canonical(value: object) -> object:

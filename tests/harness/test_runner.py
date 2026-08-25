@@ -7,7 +7,6 @@ import pytest
 from innovation_ai.agents import Agent, RandomAgent, ScriptedAgent
 from innovation_ai.harness import (
     DuplicateGameError,
-    GameBlockedError,
     GameSpec,
     InnovationEngineAdapter,
     PullGameRunner,
@@ -227,33 +226,52 @@ def test_runner_reports_duplicate_unknown_blocked_and_step_limit_states() -> Non
     assert initial_terminal.results()[0].record.actions == ()
 
 
-def test_freeze_a_adapter_blocks_after_real_dogma_instead_of_faking_a_game() -> None:
-    adapter = InnovationEngineAdapter()
-    runner = PullGameRunner(adapter, (GameSpec("freeze-a", 913),))
-    setup = runner.pending()
-    runner.submit(tuple(Submission(item.game_id, item.decision.legal_actions[0]) for item in setup))
-    turn = runner.pending()[0]
-    dogma = next(
-        action for action in turn.decision.legal_actions if isinstance(action, DogmaAction)
-    )
-    runner.submit(Submission("freeze-a", dogma))
+def test_the_real_engine_adapter_plays_a_complete_game_including_dogma() -> None:
+    """WP5 gate: a Dogma action resolves to the next decision, so a runner is never blocked."""
 
-    assert runner.pending() == ()
-    assert runner.blocked_game_ids() == ("freeze-a",)
-    with pytest.raises(GameBlockedError, match="non-terminal"):
-        SingleGameRunner(adapter).run(
-            913,
-            {
-                player: ScriptedAgent(
-                    (
-                        lambda decision: decision.legal_actions[0],
-                        lambda decision: next(
-                            action
-                            for action in decision.legal_actions
-                            if isinstance(action, DogmaAction)
-                        ),
-                    )
-                )
-                for player in PlayerId
-            },
+    adapter = InnovationEngineAdapter()
+    took_dogma = False
+    completed = 0
+    # Whether a specific seed ever reaches an implemented top card depends on the shuffle, so
+    # this walks a small deterministic seed batch and requires at least one real dogma action.
+    for seed in range(913, 921):
+        game_id = f"integration-{seed}"
+        runner = PullGameRunner(adapter, (GameSpec(game_id, seed),))
+        setup = runner.pending()
+        runner.submit(
+            tuple(Submission(item.game_id, item.decision.legal_actions[0]) for item in setup)
         )
+        for _ in range(600):
+            if runner.result(game_id) is not None:
+                break
+            pending = runner.pending()
+            assert pending, "a non-terminal game must always expose a decision"
+            assert runner.blocked_game_ids() == ()
+            request = pending[0]
+            dogma = next(
+                (
+                    action
+                    for action in request.decision.legal_actions
+                    if isinstance(action, DogmaAction)
+                ),
+                None,
+            )
+            chosen = dogma or request.decision.legal_actions[0]
+            took_dogma = took_dogma or dogma is not None
+            runner.submit(Submission(request.game_id, chosen))
+        result = runner.result(game_id)
+        assert result is not None, f"seed {seed} must terminate within the step ceiling"
+        assert result.record.terminal is not None
+        completed += 1
+    assert completed == 8
+    assert took_dogma, "the batch must actually exercise a dogma action"
+
+
+def test_a_single_game_runner_completes_a_real_game_with_agents() -> None:
+    adapter = InnovationEngineAdapter()
+    result = SingleGameRunner(adapter, max_actions=2000).run(
+        914,
+        {player: RandomAgent(seed=7 + index) for index, player in enumerate(PlayerId)},
+    )
+    assert result.record.terminal is not None
+    assert result.record.actions

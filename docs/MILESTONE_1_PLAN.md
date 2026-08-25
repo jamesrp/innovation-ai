@@ -307,6 +307,10 @@ identical state hash.
 
 ### WP5 — Dogma orchestration
 
+**Freeze-B subset status (August 25, 2026): complete.** The shared runtime contract and six-card
+vertical slice are documented in `docs/WP5_FREEZE_B_CONTRACT.md`; the remaining 99 production
+card programs stay in WP7 scope.
+
 **Dependencies:** WP4. **Parallelism:** one owner, often the WP4 owner.
 
 Deliverables:
@@ -339,8 +343,10 @@ Acceptance: immediate wins stop all remaining effects; transferred/exchanged sco
 count for Monument; same-special simultaneous eligibility follows active-player priority; deck
 exhaustion uses score then achievement count then draw.
 
-**Freeze point B:** publish the primitive/effect signatures and behavior. Card agents may now
-fan out; contract changes return to the owning work package instead of being improvised.
+**Freeze point B:** the shared primitive/effect signatures and behavior are frozen by
+`docs/WP5_FREEZE_B_CONTRACT.md`. Card agents may now fan out; contract changes return to the
+owning work package instead of being improvised. The freeze does not waive the 99 unimplemented
+WP7 card programs listed in that document.
 
 ### WP7 — Card implementations, waves 1–7
 

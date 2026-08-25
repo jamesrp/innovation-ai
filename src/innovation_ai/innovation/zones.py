@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-from innovation_ai.innovation.board import splay_stack
+from innovation_ai.innovation.board import highest_top_value, splay_stack
 from innovation_ai.innovation.catalog import CardRegistry
-from innovation_ai.innovation.state import ColorStack, GamePhase, GameState
+from innovation_ai.innovation.state import (
+    Board,
+    ColorStack,
+    GamePhase,
+    GameState,
+    RevealedCard,
+)
 from innovation_ai.innovation.types import (
     CardId,
     Color,
@@ -24,6 +32,53 @@ class StateInvariantError(RuntimeError):
 
 class ZoneOperationError(ValueError):
     """A requested primitive cannot legally address the specified zones."""
+
+
+class ValidationLevel(StrEnum):
+    """How much validation each zone primitive performs.
+
+    ``FULL`` walks all 105 cards on every mutation and is the default so tests and focused rule
+    work fail as close to the defect as possible. ``CHEAP`` keeps only the structural per-zone
+    checks that WP2 dataclasses already enforce plus the local geometry rules, which is what a
+    long self-play or fuzz run needs. ``OFF`` disables the shared validator entirely.
+    """
+
+    FULL = "full"
+    CHEAP = "cheap"
+    OFF = "off"
+
+
+_VALIDATION_LEVEL = ValidationLevel.FULL
+
+
+def validation_level() -> ValidationLevel:
+    """Return the process-wide zone validation level."""
+
+    return _VALIDATION_LEVEL
+
+
+def set_validation_level(level: ValidationLevel) -> ValidationLevel:
+    """Set and return the previous process-wide zone validation level.
+
+    This is deliberately a module-level switch rather than a per-call argument: it changes only
+    how much redundant checking happens, never the resulting authoritative state or its hash.
+    """
+
+    global _VALIDATION_LEVEL
+    previous = _VALIDATION_LEVEL
+    _VALIDATION_LEVEL = level
+    return previous
+
+
+@contextmanager
+def validation(level: ValidationLevel) -> Iterator[None]:
+    """Temporarily run zone primitives at ``level``."""
+
+    previous = set_validation_level(level)
+    try:
+        yield
+    finally:
+        set_validation_level(previous)
 
 
 class ZoneKind(StrEnum):
@@ -235,6 +290,9 @@ def assert_state_invariants(state: GameState, registry: CardRegistry) -> None:
         missing = sorted(str(card_id) for card_id in expected - actual)
         extra = sorted(str(card_id) for card_id in actual - expected)
         raise StateInvariantError(f"card conservation failed; missing={missing}, extra={extra}")
+    for marker in state.revealed:
+        if marker.card_id not in locations:
+            raise StateInvariantError(f"reveal marker names an absent card: {marker.card_id}")
 
     for age in range(1, 11):
         for card_id in state.supply.pile(age):
@@ -266,6 +324,76 @@ def assert_state_invariants(state: GameState, registry: CardRegistry) -> None:
 def _assert_mutable(state: GameState) -> None:
     if state.phase is GamePhase.TERMINAL:
         raise ZoneOperationError("terminal game state cannot be mutated")
+
+
+def _cheap_invariants(state: GameState, registry: CardRegistry) -> None:
+    """Validate only per-mutation local geometry, not the whole 105-card catalog."""
+
+    for player in state.players:
+        for stack in player.board.stacks:
+            if len(stack.cards) <= 1 and stack.splay is not SplayDirection.NONE:
+                raise StateInvariantError(f"collapsed {stack.color} stack remains splayed")
+
+
+def _validate(state: GameState, registry: CardRegistry) -> None:
+    level = _VALIDATION_LEVEL
+    if level is ValidationLevel.FULL:
+        assert_state_invariants(state, registry)
+    elif level is ValidationLevel.CHEAP:
+        _cheap_invariants(state, registry)
+
+
+def mark_revealed(
+    state: GameState, card_ids: tuple[CardId, ...], scope: str
+) -> tuple[GameState, tuple[CardId, ...]]:
+    """Mark cards face up for ``scope`` and return IDs whose marker set changed.
+
+    Reveal ownership is multi-scope: nested execution may reveal a card that an outer instruction
+    already keeps face up. Clearing the inner scope must retain the outer marker, while moving or
+    keeping the card clears every marker for that card.
+    """
+
+    if not card_ids:
+        return state, ()
+    locations = all_card_locations(state)
+    missing = tuple(card_id for card_id in card_ids if card_id not in locations)
+    if missing:
+        raise ZoneOperationError(f"cannot reveal cards outside authoritative zones: {missing}")
+    existing = {(marker.card_id, marker.scope) for marker in state.revealed}
+    added = tuple(
+        RevealedCard(card_id, scope) for card_id in card_ids if (card_id, scope) not in existing
+    )
+    if not added:
+        return state, ()
+    return replace(state, revealed=(*state.revealed, *added)), tuple(
+        marker.card_id for marker in added
+    )
+
+
+def clear_revealed_cards(state: GameState, card_ids: tuple[CardId, ...]) -> GameState:
+    """Clear reveal markers for cards that stopped being face up in place."""
+
+    targets = set(card_ids)
+    if not targets:
+        return state
+    remaining = tuple(marker for marker in state.revealed if marker.card_id not in targets)
+    if len(remaining) == len(state.revealed):
+        return state
+    return replace(state, revealed=remaining)
+
+
+def clear_revealed_scope(state: GameState, scope: str) -> GameState:
+    """Clear every reveal marker owned by ``scope`` or one of its child scopes."""
+
+    child_prefix = f"{scope}/"
+    remaining = tuple(
+        marker
+        for marker in state.revealed
+        if marker.scope != scope and not marker.scope.startswith(child_prefix)
+    )
+    if len(remaining) == len(state.revealed):
+        return state
+    return replace(state, revealed=remaining)
 
 
 def _splay_at(state: GameState, location: CardLocation) -> SplayDirection | None:
@@ -394,11 +522,13 @@ def move_card(
     if kind is ChangeKind.REMOVE and destination.kind is not ZoneKind.REMOVED:
         raise ZoneOperationError("remove operations must use the removed-card destination")
     if source == destination:
-        assert_state_invariants(state, registry)
+        _validate(state, registry)
         return state, ChangeRecord(kind)
     updated = _remove_from_zone(state, source, card_id, registry)
     updated = _add_to_zone(updated, destination, card_id, placement, registry)
-    assert_state_invariants(updated, registry)
+    # Rules decision 18: a reveal marker is physical, so moving the card ends the reveal.
+    updated = clear_revealed_cards(updated, (card_id,))
+    _validate(updated, registry)
     splay_changes = _movement_splay_changes(state, updated, (source, destination))
     return updated, ChangeRecord(
         kind,
@@ -415,7 +545,7 @@ def draw_card(
     _assert_mutable(state)
     actual_age = next_draw_age(state, requested_age)
     if actual_age is None:
-        assert_state_invariants(state, registry)
+        _validate(state, registry)
         return state, ChangeRecord(ChangeKind.DRAW), DrawResult(requested_age, None, None)
     card_id = state.supply.pile(actual_age)[0]
     updated, change = move_card(
@@ -517,6 +647,64 @@ def remove_card(
     )
 
 
+def remove_all_cards_in_play(
+    state: GameState, registry: CardRegistry
+) -> tuple[GameState, ChangeRecord]:
+    """Remove both players' hands, boards, and score piles as one atomic operation.
+
+    Fission removes up to ninety cards at once. Doing that through :func:`remove_card` would run
+    the full catalog validator once per card, so this primitive rewrites the zones directly and
+    validates the single resulting state. Achievements are untouched, matching the printed rule.
+    """
+
+    _assert_mutable(state)
+    moves: list[CardMove] = []
+    splay_changes: list[SplayChange] = []
+    removed = CardLocation.removed()
+    updated = state
+    for player_id in PlayerId:
+        player = updated.player(player_id)
+        for card_id in player.hand:
+            moves.append(CardMove(card_id, CardLocation.hand(player_id), removed))
+        for color in Color:
+            stack = player.board.stack(color)
+            location = CardLocation.board(player_id, color)
+            for card_id in stack.cards:
+                moves.append(CardMove(card_id, location, removed))
+            if stack.splay is not SplayDirection.NONE:
+                splay_changes.append(
+                    SplayChange(player_id, color, stack.splay, SplayDirection.NONE)
+                )
+        for card_id in player.score_pile:
+            moves.append(CardMove(card_id, CardLocation.score(player_id), removed))
+        updated = updated.replace_player(
+            replace(player, hand=(), board=Board.empty(), score_pile=())
+        )
+    if not moves:
+        _validate(updated, registry)
+        return updated, ChangeRecord(ChangeKind.REMOVE)
+    updated = replace(
+        updated,
+        removed_cards=(*updated.removed_cards, *(move.card_id for move in moves)),
+    )
+    updated = clear_revealed_cards(updated, tuple(move.card_id for move in moves))
+    _validate(updated, registry)
+    return updated, ChangeRecord(ChangeKind.REMOVE, tuple(moves), tuple(splay_changes))
+
+
+def draw_action(
+    state: GameState, player_id: PlayerId, registry: CardRegistry
+) -> tuple[GameState, ChangeRecord, DrawResult]:
+    """Perform the draw belonging to a Draw action or a sharing-bonus free Draw.
+
+    The paid Draw action and the sharing-bonus free Draw must never drift apart, so both call this
+    single helper: draw at the highest top-card value with the upward-only empty-pile fallback.
+    """
+
+    requested_age = highest_top_value(state.player(player_id).board, registry)
+    return draw_card(state, requested_age, player_id, registry)
+
+
 def exchange_cards(
     state: GameState,
     first_location: CardLocation,
@@ -554,7 +742,8 @@ def exchange_cards(
         [CardMove(card_id, first_location, second_location) for card_id in first_cards]
         + [CardMove(card_id, second_location, first_location) for card_id in second_cards]
     )
-    assert_state_invariants(updated, registry)
+    updated = clear_revealed_cards(updated, first_cards + second_cards)
+    _validate(updated, registry)
     splay_changes = _movement_splay_changes(state, updated, (first_location, second_location))
     return updated, ChangeRecord(ChangeKind.EXCHANGE, moves, splay_changes)
 
@@ -573,11 +762,11 @@ def set_splay(
     before = player.board.stack(color)
     after = splay_stack(before, direction)
     if after.splay is before.splay:
-        assert_state_invariants(state, registry)
+        _validate(state, registry)
         return state, ChangeRecord(ChangeKind.SPLAY)
     board = player.board.replace_stack(after)
     updated = state.replace_player(replace(player, board=board))
-    assert_state_invariants(updated, registry)
+    _validate(updated, registry)
     splay_change = SplayChange(player_id, color, before.splay, after.splay)
     return updated, ChangeRecord(ChangeKind.SPLAY, splay_changes=(splay_change,))
 
@@ -597,9 +786,9 @@ def rearrange_stack(
     if Counter(existing) != Counter(ordered_cards):
         raise ZoneOperationError("rearranged stack must contain exactly the existing cards")
     if existing == ordered_cards:
-        assert_state_invariants(state, registry)
+        _validate(state, registry)
         return state, ChangeRecord(ChangeKind.REARRANGE)
     updated = _replace_zone_cards(state, location, ordered_cards, registry)
-    assert_state_invariants(updated, registry)
+    _validate(updated, registry)
     moves = tuple(CardMove(card_id, location, location) for card_id in ordered_cards)
     return updated, ChangeRecord(ChangeKind.REARRANGE, moves)

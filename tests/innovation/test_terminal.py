@@ -14,8 +14,11 @@ from achievement_fixtures import (
 )
 
 from innovation_ai.innovation.state import (
+    EffectFrameState,
+    EffectVariable,
     GamePhase,
     GameState,
+    RevealedCard,
     TerminalReason,
     TerminalResult,
 )
@@ -75,6 +78,28 @@ def test_apply_terminal_freezes_the_state_and_rejects_further_mutation() -> None
         score_card(ended, ACTIVE, ended.supply.pile(1)[0], registry)
     with pytest.raises(TerminalError, match="cannot be finalized twice"):
         apply_terminal(ended, result)
+
+
+def test_apply_terminal_unwinds_every_transient_effect_field() -> None:
+    registry = card_registry()
+    state = playable_state(registry)
+    revealed_card = state.supply.pile(1)[0]
+    running = replace(
+        state,
+        pending_effects=(EffectFrameState("dogma-action", source_card_id=revealed_card),),
+        effect_variables=(EffectVariable("dogma:step-count", 7),),
+        revealed=(RevealedCard(revealed_card, "dogma/effect-1"),),
+    )
+    result = TerminalResult(TerminalReason.CARD_EFFECT, (ACTIVE,))
+
+    ended = apply_terminal(running, result)
+    assert ended.phase is GamePhase.TERMINAL
+    assert ended.pending_effects == ()
+    assert ended.effect_variables == ()
+    assert ended.revealed == ()
+
+    with pytest.raises(ValueError, match="transient effect runtime"):
+        replace(running, phase=GamePhase.TERMINAL, terminal_result=result)
 
 
 def test_terminal_results_canonicalize_winners_and_report_draws() -> None:

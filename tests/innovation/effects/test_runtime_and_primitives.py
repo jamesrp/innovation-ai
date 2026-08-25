@@ -6,6 +6,7 @@ import pytest
 
 from innovation_ai.innovation.actions import (
     ChooseBranchAction,
+    ChooseCardAction,
     ChoosePlayerAction,
     ChooseSplayAction,
     ChooseValueAction,
@@ -13,6 +14,7 @@ from innovation_ai.innovation.actions import (
 )
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.effects import (
+    EFFECT_RUNTIME_SCHEMA_VERSION,
     EXECUTOR,
     OPPONENT,
     AbortDogmaNode,
@@ -268,7 +270,7 @@ def test_serialized_step_ceiling_fails_loudly_and_runtime_schema_is_versioned() 
         pause_before_first_step=True,
     )
     payload = effect_runtime_payload(started.state)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == EFFECT_RUNTIME_SCHEMA_VERSION
     restored = restore_effect_runtime(
         replace(started.state, pending_effects=(), effect_variables=()), payload
     )
@@ -363,6 +365,42 @@ def test_reentered_bounded_choice_resets_scope_and_mandatory_partial_finishes() 
     assert result.decision is not None
     result = submit_effect_action(result.state, result.decision.legal_actions[0], partial_programs)
     assert result.status is EffectStatus.COMPLETE
+
+
+def test_canonical_bounded_selection_never_strands_a_reachable_minimum() -> None:
+    state = _state()
+    source = CardId("pottery")
+    lower = CardId("tools")
+    higher = CardId("writing")
+    program = EffectProgram(
+        "test-bounded-minimum-v1",
+        source,
+        (ProgramEffect(DogmaEffectId(source, 1), False, "choose"),),
+        (
+            ChoiceNode(
+                "choose",
+                ChoiceKind.BOUNDED_CARDS,
+                "selected",
+                cards=CardSelector.constant((lower, higher)),
+                minimum=2,
+                maximum=2,
+            ),
+        ),
+    )
+    programs = EffectProgramRegistry((program,))
+
+    started = start_effect(state, program.program_id, _context(state, source), programs)
+    assert started.decision is not None
+    assert started.decision.legal_actions == (
+        ChooseCardAction(started.decision.decision_id, lower),
+    )
+    continued = submit_effect_action(started.state, started.decision.legal_actions[0], programs)
+    assert continued.decision is not None
+    assert continued.decision.legal_actions == (
+        ChooseCardAction(continued.decision.decision_id, higher),
+    )
+    completed = submit_effect_action(continued.state, continued.decision.legal_actions[0], programs)
+    assert completed.status is EffectStatus.COMPLETE
 
 
 def test_effect_scopes_do_not_bleed_and_dynamic_choices_are_consumable() -> None:
@@ -546,53 +584,31 @@ def test_start_single_program_effect_supports_wp5_executor_ordering() -> None:
         )
 
 
-def test_effect_root_composes_with_orchestrator_frame_and_preserves_unowned_state() -> None:
+def test_root_effect_rejects_preexisting_runtime_instead_of_nesting_implicitly() -> None:
+    """Nested execution must use ``NestedNode`` rather than stacking another root runtime."""
+
     state = _state()
     base = EffectFrameState(
-        "dogma-action",
-        variables=(EffectVariable("owner", "wp5"),),
+        "external-orchestrator",
+        variables=(EffectVariable("owner", "integration"),),
     )
     state = replace(
         state,
         pending_effects=(base,),
         effect_variables=(EffectVariable("orchestrator:index", 2),),
     )
-    source = CardId("pottery")
+    source = CardId("calendar")
     programs = synthetic_program_registry()
     context = replace(_context(state, source), scope="executor-1")
-    result = start_effect(
-        state,
-        "synthetic-pottery-v1",
-        context,
-        programs,
-    )
-    assert result.status is EffectStatus.AWAIT_DECISION
-    before_poll = state_hash(result.state)
-    polled = resume_effect(result.state, programs)
-    assert polled.status is EffectStatus.AWAIT_DECISION
-    assert state_hash(polled.state) == before_poll
-
-    assert result.decision is not None
-    finish = next(
-        action
-        for action in result.decision.legal_actions
-        if action.kind.value == "finish-selection"
-    )
-    completed = submit_effect_action(result.state, finish, programs)
-    assert completed.status is EffectStatus.COMPLETE
-    assert completed.state.pending_effects == (base,)
-    assert completed.state.effect_variables == (EffectVariable("orchestrator:index", 2),)
-    boundary = resume_effect(completed.state, programs)
-    assert boundary.status is EffectStatus.COMPLETE
-    assert boundary.state == completed.state
-
-    payload = effect_runtime_payload(completed.state)
-    restored = restore_effect_runtime(
-        replace(completed.state, pending_effects=(), effect_variables=()),
-        payload,
-        programs,
-    )
-    assert restored == completed.state
+    before = state_hash(state)
+    with pytest.raises(EffectInvariantError, match="runtime is pending"):
+        start_effect(
+            state,
+            "synthetic-bounded-selection-v1",
+            context,
+            programs,
+        )
+    assert state_hash(state) == before
 
 
 def test_step_effect_abort_reports_persisted_change_count() -> None:
@@ -679,11 +695,11 @@ def test_absent_card_predicate_is_false_and_contract_validation_is_strict() -> N
 
 def test_restore_rejects_missing_vm_counters_and_effect_illegal_is_wp3_illegal() -> None:
     state = _state()
-    source = CardId("pottery")
+    source = CardId("calendar")
     programs = synthetic_program_registry()
     started = start_effect(
         state,
-        "synthetic-pottery-v1",
+        "synthetic-bounded-selection-v1",
         _context(state, source),
         programs,
     )

@@ -22,6 +22,8 @@ from innovation_ai.innovation.actions import (
     MeldAction,
     OrderCardsAction,
 )
+from innovation_ai.innovation.effects import EffectContext, start_effect
+from innovation_ai.innovation.effects.synthetic import synthetic_program_registry
 from innovation_ai.innovation.protocol import current_decision
 from innovation_ai.innovation.serialization import (
     SchemaVersionError,
@@ -39,8 +41,7 @@ from innovation_ai.innovation.serialization import (
     state_from_payload,
 )
 from innovation_ai.innovation.state import (
-    EffectFrameState,
-    EffectVariable,
+    GamePhase,
     TerminalReason,
     TerminalResult,
     build_setup_state,
@@ -56,19 +57,32 @@ from innovation_ai.innovation.types import (
 
 
 def test_state_round_trip_preserves_resumable_pending_frame() -> None:
-    state = build_setup_state(901)
-    pending = replace(
-        state,
-        pending_effects=(
-            EffectFrameState(
-                "repeat",
-                step=3,
-                source_card_id=state.players[0].hand[0],
-                variables=(EffectVariable("nested", ("blue", 4, True, None, ("inner", 2))),),
-            ),
-        ),
-        effect_variables=(EffectVariable("executor", PlayerId.PLAYER_2.value),),
+    state = replace(
+        build_setup_state(901),
+        phase=GamePhase.PLAY,
+        active_player=PlayerId.PLAYER_1,
+        turn_number=2,
+        paid_actions_remaining=1,
+        starting_meld_choices=(None, None),
     )
+    source = CardId("calendar")
+    context = EffectContext(
+        actor=PlayerId.PLAYER_1,
+        chooser=PlayerId.PLAYER_1,
+        executor=PlayerId.PLAYER_1,
+        dogma_activator=PlayerId.PLAYER_1,
+        source_card_id=source,
+        source_effect_id=None,
+        turn_id=state.turn_number,
+        dogma_action_id=1,
+    )
+    pending = start_effect(
+        state,
+        "synthetic-bounded-selection-v1",
+        context,
+        synthetic_program_registry(),
+        pause_before_first_step=True,
+    ).state
 
     encoded = dumps_state(pending)
     assert encoded == dumps_state(pending)

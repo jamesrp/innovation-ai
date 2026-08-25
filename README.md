@@ -9,17 +9,18 @@ reliable play between basic agents and later for self-play and PyTorch research.
 turn, and nested card-effect choice will be exposed as a serializable first-class decision, with
 strict separation between authoritative state and player-visible observations.
 
-The engine foundation now includes WP1's validated immutable card catalog, WP2's immutable
-authoritative state and geometry, WP3's versioned semantic actions/decisions, WP6 achievement and
-terminal handling, and WP9 versioned serialization, setup-provenanced logs, hash-verifying replay,
-and minimal play/replay CLI. WP4 will resolve the serializable Dogma handoff frames and call the
-WP6 atomic-boundary hooks.
+The engine foundation now includes the validated catalog/state/protocol layers, resumable WP4/WP5
+effects and public Dogma integration, WP6 achievement/terminal handling, basic agents/runners,
+versioned serialization/log/replay, invariants, and deterministic fuzzing. Freeze B is complete for
+the shared runtime plus a six-card vertical slice; the exact 99-card WP7 breadth gap is listed in
+`docs/WP5_FREEZE_B_CONTRACT.md`.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`
 - Implementation sequence: `docs/MILESTONE_1_PLAN.md`
 - WP2 state/geometry contract: `docs/WP2_STATE_CONTRACT.md`
 - WP3 protocol contract: `docs/WP3_PROTOCOL_CONTRACT.md`
+- WP5 Freeze-B/effect contract: `docs/WP5_FREEZE_B_CONTRACT.md`
 - WP6 achievement/terminal contract: `docs/WP6_ACHIEVEMENT_CONTRACT.md`
 - WP9 serialization/replay contract: `docs/WP9_REPLAY_CONTRACT.md`
 - Rules interpretations: `docs/RULES_DECISIONS.md`

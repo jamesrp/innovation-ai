@@ -18,7 +18,7 @@ from innovation_ai.innovation.types import (
     SplayDirection,
 )
 
-OBSERVATION_SCHEMA_VERSION = 1
+OBSERVATION_SCHEMA_VERSION = 2
 
 
 class InformationPolicy(StrEnum):
@@ -30,7 +30,12 @@ class InformationPolicy(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ZoneObservation:
-    """A hand or score pile: values are public, identities may be private."""
+    """A hand or score pile: values are public, identities may be private.
+
+    ``known_cards`` contains identities the viewer may legally see: everything in their own zone,
+    plus any opponent card that is currently face up under a resolving instruction (rules
+    decision 18).
+    """
 
     values: tuple[int, ...]
     known_cards: tuple[CardId, ...]
@@ -99,6 +104,7 @@ class GameObservation:
     available_special_achievements: tuple[SpecialAchievementId, ...]
     information_policy: InformationPolicy
     rules_version: str
+    revealed_cards: tuple[CardId, ...] = ()
     schema_version: int = OBSERVATION_SCHEMA_VERSION
 
     def player(self, player_id: PlayerId) -> PlayerObservation:
@@ -108,11 +114,15 @@ class GameObservation:
 
 
 def _zone_observation(
-    card_ids: tuple[CardId, ...], *, reveal: bool, registry: CardRegistry
+    card_ids: tuple[CardId, ...],
+    *,
+    reveal: bool,
+    registry: CardRegistry,
+    revealed: frozenset[CardId] = frozenset(),
 ) -> ZoneObservation:
     values = tuple(sorted(registry.card(card_id).age for card_id in card_ids))
-    known = tuple(sorted(card_ids, key=str)) if reveal else ()
-    return ZoneObservation(values, known)
+    visible = card_ids if reveal else tuple(card_id for card_id in card_ids if card_id in revealed)
+    return ZoneObservation(values, tuple(sorted(visible, key=str)))
 
 
 def _stack_observation(
@@ -174,12 +184,21 @@ def observe(
 
     registry = registry or load_card_registry()
     selected_policy = policy or InformationPolicy(state.information_policy_version)
+    revealed = state.revealed_card_ids
     players = tuple(
         PlayerObservation(
             player.player_id,
-            _zone_observation(player.hand, reveal=player.player_id is viewer, registry=registry),
             _zone_observation(
-                player.score_pile, reveal=player.player_id is viewer, registry=registry
+                player.hand,
+                reveal=player.player_id is viewer,
+                registry=registry,
+                revealed=revealed,
+            ),
+            _zone_observation(
+                player.score_pile,
+                reveal=player.player_id is viewer,
+                registry=registry,
+                revealed=revealed,
             ),
             tuple(
                 _stack_observation(
@@ -214,4 +233,5 @@ def observe(
         ),
         information_policy=selected_policy,
         rules_version=state.rules_version,
+        revealed_cards=tuple(sorted(revealed, key=str)),
     )

@@ -12,6 +12,7 @@ from innovation_ai.innovation.actions import (
     SemanticAction,
 )
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
+from innovation_ai.innovation.effects.registry import effects_fingerprint
 from innovation_ai.innovation.logs import (
     ENGINE_VERSION,
     GAME_LOG_FORMAT,
@@ -78,7 +79,7 @@ class ReplayAdapter(Protocol):
 
 
 class DefaultReplayAdapter:
-    """Replay adapter for the current setup/paid-action protocol."""
+    """Replay adapter for the setup, paid-action, and mid-dogma protocol."""
 
     def initial_state(self, setup: SetupProvenance, registry: CardRegistry) -> GameState:
         state = build_setup_state_from_piles(
@@ -101,8 +102,6 @@ class DefaultReplayAdapter:
     def outcome(self, state: GameState) -> ReplayOutcome:
         if state.phase is GamePhase.TERMINAL:
             return ReplayOutcome.TERMINAL
-        if state.pending_effects:
-            return ReplayOutcome.EFFECT_RESOLUTION_PENDING
         return ReplayOutcome.DECISION
 
 
@@ -141,6 +140,8 @@ def check_game_log_compatibility(log: GameLog, registry: CardRegistry | None = N
         ("terminal schema", log.terminal_schema_version, TERMINAL_SCHEMA_VERSION),
         ("setup RNG", log.setup.rng_version, SETUP_RNG_VERSION),
         ("card-data fingerprint", log.card_data_fingerprint, registry.data_fingerprint),
+        # A card behaviour change invalidates old replays loudly rather than diverging silently.
+        ("effects fingerprint", log.effects_fingerprint, effects_fingerprint()),
     )
     for name, actual, expected in expected_versions:
         if actual != expected:
@@ -281,6 +282,7 @@ class GameLogRecorder:
             rules_version=self._initial_state.rules_version,
             information_policy_version=self._initial_state.information_policy_version,
             card_data_fingerprint=self._registry.data_fingerprint,
+            effects_fingerprint=effects_fingerprint(),
             setup=self._initial_state.setup,
             initial_state_hash=state_hash(self._initial_state),
             transitions=tuple(self._transitions),

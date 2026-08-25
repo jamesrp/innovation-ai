@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 from innovation_ai.innovation.actions import DogmaAction, SemanticAction, action_payload
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
+from innovation_ai.innovation.effects.program import EffectProgramRegistry
+from innovation_ai.innovation.effects.registry import load_effect_programs
 from innovation_ai.innovation.invariants import assert_state_properties, checked_apply_action
 from innovation_ai.innovation.protocol import current_decisions
 from innovation_ai.innovation.state import TerminalResult, build_setup_state, state_hash
@@ -54,10 +56,22 @@ class ProtocolFuzzResult:
         return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def _supported_actions(actions: tuple[SemanticAction, ...]) -> tuple[SemanticAction, ...]:
-    """Exclude Dogma until WP4 supplies a resumable effect transition path."""
+def _supported_actions(
+    actions: tuple[SemanticAction, ...], programs: EffectProgramRegistry
+) -> tuple[SemanticAction, ...]:
+    """Return every action the fuzzer may submit.
 
-    return tuple(action for action in actions if not isinstance(action, DogmaAction))
+    Dogma is now fully executable, so it is no longer filtered out. It is still restricted to
+    cards whose effects are registered, which is exactly what a wave-scoped run needs: an
+    unregistered card must fail loudly if selected, never behave as a no-op.
+    """
+
+    implemented = programs.implemented_card_ids()
+    return tuple(
+        action
+        for action in actions
+        if not isinstance(action, DogmaAction) or action.card_id in implemented
+    )
 
 
 def run_protocol_fuzz(
@@ -65,21 +79,21 @@ def run_protocol_fuzz(
     registry: CardRegistry | None = None,
     *,
     max_steps: int = 512,
+    programs: EffectProgramRegistry | None = None,
 ) -> ProtocolFuzzResult:
-    """Play a deterministic legal game over the complete currently executable WP3 protocol.
+    """Play a deterministic legal game over the complete executable protocol.
 
-    Setup choices and paid Draw/Meld/Achieve actions are selected from enumerated legal actions.
-    Dogma is intentionally not selected: WP3 only creates a placeholder pending frame and card
-    effects do not yet have a resume API.  The fuzzer still verifies Dogma action enumeration via
-    the legal-action-completeness invariant on every state.
+    Setup choices, paid Draw/Meld/Achieve/Dogma actions, and every mid-dogma effect choice are
+    selected from enumerated legal actions and checked on every transition.
     """
 
     if max_steps < 1:
         raise ValueError("protocol fuzz max_steps must be positive")
     registry = registry or load_card_registry()
+    resolved_programs = programs or load_effect_programs()
     rng = random.Random(seed)
     state = build_setup_state(seed, registry)
-    assert_state_properties(state, registry)
+    assert_state_properties(state, registry, resolved_programs)
     steps: list[ProtocolFuzzStep] = []
 
     for number in range(1, max_steps + 1):
@@ -90,20 +104,20 @@ def run_protocol_fuzz(
                 state.terminal_result,
                 state_hash(state),
             )
-        decisions = current_decisions(state, registry)
+        decisions = current_decisions(state, registry, resolved_programs)
         if not decisions:
             raise ProtocolFuzzError(
                 f"seed {seed} stalled after {len(steps)} steps with no protocol decision"
             )
         decision = decisions[rng.randrange(len(decisions))]
-        actions = _supported_actions(decision.legal_actions)
+        actions = _supported_actions(decision.legal_actions, resolved_programs)
         if not actions:
             raise ProtocolFuzzError(
-                f"seed {seed} decision {decision.decision_id} has no WP3-executable action"
+                f"seed {seed} decision {decision.decision_id} has no executable action"
             )
         action = actions[rng.randrange(len(actions))]
         before_hash = state_hash(state)
-        transition = checked_apply_action(state, action, registry)
+        transition = checked_apply_action(state, action, registry, resolved_programs)
         state = transition.state
         steps.append(ProtocolFuzzStep(number, action, before_hash, state_hash(state)))
 
@@ -115,8 +129,13 @@ def run_protocol_fuzz_seeds(
     registry: CardRegistry | None = None,
     *,
     max_steps: int = 512,
+    programs: EffectProgramRegistry | None = None,
 ) -> tuple[ProtocolFuzzResult, ...]:
-    """Run a deterministic seed batch, reusing one immutable card registry."""
+    """Run a deterministic seed batch, reusing one immutable card and program registry."""
 
     registry = registry or load_card_registry()
-    return tuple(run_protocol_fuzz(seed, registry, max_steps=max_steps) for seed in seeds)
+    resolved_programs = programs or load_effect_programs()
+    return tuple(
+        run_protocol_fuzz(seed, registry, max_steps=max_steps, programs=resolved_programs)
+        for seed in seeds
+    )

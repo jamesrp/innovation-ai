@@ -124,7 +124,9 @@ def test_simple_heuristic_uses_visible_icon_advantage_for_dogma() -> None:
     registry = load_card_registry()
     agent = SimpleHeuristicAgent(registry)
     paid = _first_turn_decision(806)
-    dogma = next(action for action in paid.legal_actions if isinstance(action, DogmaAction))
+    # The paid decision only offers Dogma for cards whose effects are registered, so the
+    # heuristic's icon comparison is exercised with an explicitly named implemented card.
+    dogma = DogmaAction(paid.decision_id, CardId("the-wheel"))
     source = registry.card(dogma.card_id)
 
     opponent = next(

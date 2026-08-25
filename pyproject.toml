@@ -38,6 +38,9 @@ explicit = true
 [tool.pytest.ini_options]
 addopts = "--strict-markers --strict-config -ra"
 testpaths = ["tests"]
+# The frozen shared card/effect test-support package lives beside the suites that use it, so it
+# is importable as `support` from every test module regardless of directory depth.
+pythonpath = ["tests/innovation"]
 markers = [
     "slow: deterministic tests excluded from the default fast suite",
     "fuzz: high-volume randomized invariant tests",

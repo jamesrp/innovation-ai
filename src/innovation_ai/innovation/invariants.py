@@ -27,6 +27,9 @@ from innovation_ai.innovation.board import (
     visible_icons_for_stack,
 )
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
+from innovation_ai.innovation.effects.engine import current_effect_decision
+from innovation_ai.innovation.effects.program import EffectProgramRegistry
+from innovation_ai.innovation.effects.registry import load_effect_programs
 from innovation_ai.innovation.observations import InformationPolicy, observe
 from innovation_ai.innovation.protocol import (
     EngineInvariantError,
@@ -153,7 +156,20 @@ def assert_score_consistency(state: GameState, registry: CardRegistry | None = N
                 score.values == expected_values,
                 f"public score values are inconsistent for {player.player_id}",
             )
-            expected_cards = player.score_pile if viewer is player.player_id else ()
+            if viewer is player.player_id:
+                expected_cards = player.score_pile
+            else:
+                # Rules decision 18: a card that is literally face up is deliberately public.
+                expected_cards = tuple(
+                    sorted(
+                        (
+                            card_id
+                            for card_id in player.score_pile
+                            if card_id in state.revealed_card_ids
+                        ),
+                        key=str,
+                    )
+                )
             _require(
                 score.known_cards == expected_cards,
                 f"score identity visibility is inconsistent for viewer {viewer}",
@@ -258,6 +274,8 @@ def assert_turn_consistency(state: GameState) -> None:
 def _eligible_achievements(
     state: GameState, player_id: PlayerId, registry: CardRegistry
 ) -> tuple[NormalAchievementId, ...]:
+    """Recompute normal-achievement eligibility independently of the engine's own code path."""
+
     claimed = {
         achievement for player in state.players for achievement in player.normal_achievements
     }
@@ -276,17 +294,38 @@ def assert_legal_action_completeness(
     registry: CardRegistry | None = None,
     *,
     decisions: tuple[Decision, ...] | None = None,
+    programs: EffectProgramRegistry | None = None,
 ) -> None:
-    """Require current WP3 decisions to enumerate every and only legal semantic action.
+    """Require current decisions to enumerate every and only legal semantic action.
 
-    Pending effect frames intentionally have no decision API yet.  WP4 must extend this check when
-    effect choices become available rather than weakening the paid-action checks here.
+    A pending effect frame is no longer exempt: a mid-dogma state must expose exactly one decision
+    whose legal actions equal what the effect executor would offer. A state that is running but
+    exposes nothing would be undecidable for a runner, a fuzzer, and a replay alike.
     """
 
     registry = registry or load_card_registry()
-    actual = current_decisions(state, registry) if decisions is None else decisions
-    if state.phase is GamePhase.TERMINAL or state.pending_effects:
-        _require(not actual, "terminal or pending state exposes a decision")
+    resolved_programs = programs or load_effect_programs()
+    actual = (
+        current_decisions(state, registry, resolved_programs) if decisions is None else decisions
+    )
+    if state.phase is GamePhase.TERMINAL:
+        _require(not actual, "terminal state exposes a decision")
+        return
+    if state.pending_effects:
+        _require(len(actual) == 1, "a paused effect must expose exactly one decision")
+        expected_decision = current_effect_decision(state, resolved_programs, registry)
+        if expected_decision is None:
+            raise InvariantViolation("a paused effect exposes no effect decision")
+        decision = actual[0]
+        _require(
+            decision.legal_actions == expected_decision.legal_actions,
+            "effect legal-action set is incomplete",
+        )
+        _require(
+            decision.observation == observe(state, decision.chooser, registry),
+            "effect decision observation is stale",
+        )
+        _require(decision.context is not None, "an effect decision must carry its context")
         return
     if state.phase is GamePhase.STARTING_MELDS:
         expected_choosers = tuple(
@@ -322,10 +361,15 @@ def assert_legal_action_completeness(
         raise InvariantViolation("play decision has no active player")
     decision_id = state.next_decision_id
     player = state.player(active_player)
+    implemented = resolved_programs.implemented_card_ids()
     expected_actions: tuple[SemanticAction, ...] = (
         DrawAction(decision_id),
         *(MeldAction(decision_id, card_id) for card_id in player.hand),
-        *(DogmaAction(decision_id, card_id) for card_id in top_cards(player.board)),
+        *(
+            DogmaAction(decision_id, card_id)
+            for card_id in top_cards(player.board)
+            if card_id in implemented
+        ),
         *(
             AchieveAction(decision_id, achievement_id)
             for achievement_id in _eligible_achievements(state, active_player, registry)
@@ -380,7 +424,11 @@ def assert_transition_purity(before: GameState, snapshot: GameState) -> None:
 def assert_turn_progression(
     before: GameState, action: SemanticAction, transition: Transition
 ) -> None:
-    """Require monotonic IDs and paid-turn fields to progress exactly once."""
+    """Require monotonic IDs and paid-turn fields to progress exactly once.
+
+    Effect choices have their own rule: they consume no paid action and do not rotate the turn,
+    so they must not be routed through the paid-action decrement assertion.
+    """
 
     after = transition.state
     if isinstance(action, ChooseStartingMeldAction):
@@ -399,6 +447,23 @@ def assert_turn_progression(
             _require(after.turn_number == 0, "partial setup advanced the turn")
         return
 
+    if before.pending_effects:
+        _require(
+            after.next_decision_id == before.next_decision_id + 1,
+            "an effect choice did not advance the decision ID",
+        )
+        _require(
+            after.next_dogma_action_id == before.next_dogma_action_id,
+            "an effect choice started a new dogma action",
+        )
+        _require(
+            after.paid_actions_remaining >= before.paid_actions_remaining,
+            "an effect choice consumed a paid action",
+        )
+        _require(after.turn_number >= before.turn_number, "turn number moved backwards")
+        _require(after.turn_number <= before.turn_number + 1, "an effect choice skipped a turn")
+        return
+
     _require(after.next_decision_id == before.next_decision_id + 1, "decision ID did not advance")
     expected_dogma_id = before.next_dogma_action_id + int(isinstance(action, DogmaAction))
     _require(after.next_dogma_action_id == expected_dogma_id, "dogma action ID progressed wrongly")
@@ -406,7 +471,7 @@ def assert_turn_progression(
     _require(after.turn_number >= before.turn_number, "turn number moved backwards")
     _require(after.turn_number <= before.turn_number + 1, "transition skipped a turn")
 
-    if after.phase is GamePhase.TERMINAL or transition.effect_resolution_pending:
+    if after.phase is GamePhase.TERMINAL or after.pending_effects:
         _require(
             after.active_player is before.active_player,
             "unfinished action changed active player",
@@ -431,15 +496,17 @@ def assert_transition_consistency(
     action: SemanticAction,
     transition: Transition,
     registry: CardRegistry | None = None,
+    programs: EffectProgramRegistry | None = None,
 ) -> None:
     """Validate one completed public transition and its resulting state."""
 
     registry = registry or load_card_registry()
+    resolved_programs = programs or load_effect_programs()
     _require(transition.state is not before, "a legal action returned its input state object")
     assert_turn_progression(before, action, transition)
-    assert_state_properties(transition.state, registry)
+    assert_state_properties(transition.state, registry, resolved_programs)
     if transition.decision is not None:
-        decisions = current_decisions(transition.state, registry)
+        decisions = current_decisions(transition.state, registry, resolved_programs)
         _require(transition.decision in decisions, "transition returned a stale next decision")
     if transition.terminal is not None:
         _require(
@@ -452,14 +519,16 @@ def checked_apply_action(
     state: GameState,
     action: SemanticAction,
     registry: CardRegistry | None = None,
+    programs: EffectProgramRegistry | None = None,
 ) -> Transition:
     """Apply one action while checking transition purity and all available WP10 properties."""
 
     registry = registry or load_card_registry()
+    resolved_programs = programs or load_effect_programs()
     snapshot = clone_state(state)
-    transition = apply_action(state, action, registry)
+    transition = apply_action(state, action, registry, resolved_programs)
     assert_transition_purity(state, snapshot)
-    assert_transition_consistency(state, action, transition, registry)
+    assert_transition_consistency(state, action, transition, registry, resolved_programs)
     return transition
 
 
@@ -501,8 +570,12 @@ def assert_terminal_immutability(state: GameState, registry: CardRegistry | None
         assert_transition_purity(state, snapshot)
 
 
-def assert_state_properties(state: GameState, registry: CardRegistry | None = None) -> None:
-    """Run all state-local WP10 properties available through the WP1-WP3 APIs."""
+def assert_state_properties(
+    state: GameState,
+    registry: CardRegistry | None = None,
+    programs: EffectProgramRegistry | None = None,
+) -> None:
+    """Run all state-local WP10 properties available through the public engine APIs."""
 
     registry = registry or load_card_registry()
     assert_unique_card_locations(state)
@@ -514,4 +587,30 @@ def assert_state_properties(state: GameState, registry: CardRegistry | None = No
     assert_score_consistency(state, registry)
     assert_icon_geometry(state, registry)
     assert_turn_consistency(state)
-    assert_legal_action_completeness(state, registry)
+    assert_revealed_consistency(state)
+    assert_legal_action_completeness(state, registry, programs=programs)
+
+
+def assert_revealed_consistency(state: GameState) -> None:
+    """Require every reveal marker to name a card that is still somewhere in play.
+
+    Rules decision 18 makes a reveal marker physical, so a marker for a card that no longer exists
+    in an inspectable zone would leak information about a card nobody can see.
+    """
+
+    if not state.revealed:
+        return
+    _require(
+        state.phase is not GamePhase.TERMINAL,
+        "a terminal state retains transient reveal markers",
+    )
+    located = {card_id for card_id, _ in _card_occurrences(state)}
+    for marker in state.revealed:
+        _require(
+            marker.card_id in located,
+            f"reveal marker names an absent card: {marker.card_id}",
+        )
+    _require(
+        bool(state.pending_effects),
+        "reveal markers survived the effect that created them",
+    )

@@ -1,4 +1,10 @@
-"""Deterministic setup and paid-turn decision protocol."""
+"""Deterministic setup, paid-turn, and mid-dogma decision protocol.
+
+``current_decisions`` and ``apply_action`` are the single public transition boundary for every
+player choice, including choices nested inside a dogma effect. Public action transitions always
+resume deterministic effect work to a decision or terminal result. Low-level diagnostic
+checkpoints produced by ``step_effect`` are resumed explicitly with ``resume_pending_effects``.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +17,6 @@ from innovation_ai.innovation.achievements import (
 )
 from innovation_ai.innovation.actions import (
     AchieveAction,
-    Action,
     ChooseStartingMeldAction,
     Decision,
     DecisionKind,
@@ -20,12 +25,24 @@ from innovation_ai.innovation.actions import (
     MeldAction,
     SemanticAction,
 )
-from innovation_ai.innovation.board import highest_top_value, top_cards
+from innovation_ai.innovation.board import top_cards
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
+from innovation_ai.innovation.effects.dogma import start_dogma
+from innovation_ai.innovation.effects.engine import (
+    current_effect_decision,
+    resume_effect,
+    submit_effect_action,
+)
+from innovation_ai.innovation.effects.model import EffectStatus
+from innovation_ai.innovation.effects.program import EffectProgramRegistry
+from innovation_ai.innovation.effects.registry import load_effect_programs
+from innovation_ai.innovation.errors import (
+    EngineInvariantError,
+    IllegalAction,
+    InnovationEngineError,
+)
 from innovation_ai.innovation.observations import observe
 from innovation_ai.innovation.state import (
-    EffectFrameState,
-    EffectVariable,
     GamePhase,
     GameState,
     TerminalState,
@@ -33,49 +50,47 @@ from innovation_ai.innovation.state import (
 )
 from innovation_ai.innovation.terminal import apply_terminal, draw_beyond_age_ten_result
 from innovation_ai.innovation.types import PlayerId
-from innovation_ai.innovation.zones import assert_state_invariants, draw_card, meld_card
+from innovation_ai.innovation.zones import assert_state_invariants, draw_action, meld_card
+
+__all__ = [
+    "EngineInvariantError",
+    "IllegalAction",
+    "InnovationEngineError",
+    "Transition",
+    "apply_action",
+    "current_decision",
+    "current_decisions",
+    "effect_programs",
+    "other_player",
+    "resume_pending_effects",
+    "terminal_transition",
+]
 
 
-class InnovationEngineError(RuntimeError):
-    """Base class for recoverable protocol errors and engine defects."""
+def effect_programs(programs: EffectProgramRegistry | None = None) -> EffectProgramRegistry:
+    """Return the supplied registry, or the discovered production registry."""
 
-
-class IllegalAction(InnovationEngineError):
-    """An agent submitted an action outside the current legal-action set."""
-
-    def __init__(self, action: Action, decision: Decision) -> None:
-        self.action = action
-        self.decision = decision
-        super().__init__(f"illegal {action.kind.value} action for decision {decision.decision_id}")
-
-
-class EngineInvariantError(InnovationEngineError):
-    """The engine reached a state that violates the transition protocol."""
+    return programs if programs is not None else load_effect_programs()
 
 
 @dataclass(frozen=True, slots=True)
 class Transition:
-    """Result of applying one semantic action."""
+    """Result of applying one semantic action.
+
+    Exactly one of ``decision`` and ``terminal`` is present. There is deliberately no third
+    "effect resolution pending" outcome: a mid-dogma state always exposes its next decision, so a
+    runner, a fuzzer, and a replay all see the same boundary shape.
+    """
 
     state: GameState
     decision: Decision | None = None
     terminal: TerminalState | None = None
-    effect_resolution_pending: bool = False
 
     def __post_init__(self) -> None:
-        outcomes = sum(
-            (
-                self.decision is not None,
-                self.terminal is not None,
-                self.effect_resolution_pending,
-            )
-        )
-        if outcomes != 1:
+        if (self.decision is not None) == (self.terminal is not None):
             raise ValueError("a transition must have exactly one next outcome")
         if (self.terminal is not None) != (self.state.phase is GamePhase.TERMINAL):
             raise ValueError("terminal transition outcome does not match state phase")
-        if self.effect_resolution_pending and not self.state.pending_effects:
-            raise ValueError("pending transition requires a serializable effect frame")
 
 
 def other_player(player_id: PlayerId) -> PlayerId:
@@ -112,13 +127,23 @@ def _starting_decisions(state: GameState, registry: CardRegistry) -> tuple[Decis
 
 
 def _turn_actions(
-    state: GameState, player_id: PlayerId, registry: CardRegistry
+    state: GameState,
+    player_id: PlayerId,
+    registry: CardRegistry,
+    programs: EffectProgramRegistry,
 ) -> tuple[SemanticAction, ...]:
     decision_id = state.next_decision_id
     player = state.player(player_id)
+    implemented = programs.implemented_card_ids()
     actions: list[SemanticAction] = [DrawAction(decision_id)]
     actions.extend(MeldAction(decision_id, card_id) for card_id in player.hand)
-    actions.extend(DogmaAction(decision_id, card_id) for card_id in top_cards(player.board))
+    # A top card whose effects are not yet registered is not offered, because a Dogma action on
+    # it must fail loudly rather than silently behave as a no-op.
+    actions.extend(
+        DogmaAction(decision_id, card_id)
+        for card_id in top_cards(player.board)
+        if card_id in implemented
+    )
     actions.extend(
         AchieveAction(decision_id, achievement_id)
         for achievement_id in eligible_normal_achievements(state, player_id, registry)
@@ -127,13 +152,23 @@ def _turn_actions(
 
 
 def current_decisions(
-    state: GameState, registry: CardRegistry | None = None
+    state: GameState,
+    registry: CardRegistry | None = None,
+    programs: EffectProgramRegistry | None = None,
 ) -> tuple[Decision, ...]:
-    """Return every currently pending decision in deterministic player order."""
+    """Return every currently pending decision in deterministic player order.
+
+    At a public action boundary, a pending effect stack exposes exactly one player decision.
+    A low-level deterministic checkpoint may expose none until :func:`resume_pending_effects`
+    advances it.
+    """
 
     registry = registry or load_card_registry()
-    if state.phase is GamePhase.TERMINAL or state.pending_effects:
+    if state.phase is GamePhase.TERMINAL:
         return ()
+    if state.pending_effects:
+        decision = current_effect_decision(state, effect_programs(programs), registry)
+        return (decision,) if decision is not None else ()
     if state.phase is GamePhase.STARTING_MELDS:
         decisions = _starting_decisions(state, registry)
         if not decisions:
@@ -143,7 +178,7 @@ def current_decisions(
         raise EngineInvariantError(f"unsupported game phase: {state.phase}")
     if state.active_player is None or state.paid_actions_remaining < 1:
         raise EngineInvariantError("play decision requires an active player and paid action")
-    legal_actions = _turn_actions(state, state.active_player, registry)
+    legal_actions = _turn_actions(state, state.active_player, registry, effect_programs(programs))
     return (
         Decision(
             state.next_decision_id,
@@ -156,10 +191,14 @@ def current_decisions(
     )
 
 
-def current_decision(state: GameState, registry: CardRegistry | None = None) -> Decision | None:
-    """Return the first pending decision, or ``None`` for terminal/pending states."""
+def current_decision(
+    state: GameState,
+    registry: CardRegistry | None = None,
+    programs: EffectProgramRegistry | None = None,
+) -> Decision | None:
+    """Return the first pending decision, or ``None`` at a terminal/deterministic checkpoint."""
 
-    decisions = current_decisions(state, registry)
+    decisions = current_decisions(state, registry, programs)
     return decisions[0] if decisions else None
 
 
@@ -200,24 +239,30 @@ def _advance_after_paid_action(state: GameState) -> GameState:
     )
 
 
-def _next_transition(state: GameState, registry: CardRegistry) -> Transition:
+def _next_transition(
+    state: GameState,
+    registry: CardRegistry,
+    programs: EffectProgramRegistry,
+) -> Transition:
     """Return the next decision after one completed unit of protocol work.
 
     The achievement boundary check runs before the turn can rotate, so Monument's per-turn
-    counters are still intact when it evaluates. While effect frames remain pending, WP4 owns
-    the boundary checks inside the dogma action and this function simply hands control back.
+    counters are still intact when it evaluates.
     """
 
     if state.phase is GamePhase.TERMINAL:
         assert state.terminal_result is not None
         return Transition(state, terminal=state.terminal_result)
     if state.pending_effects:
-        return Transition(state, effect_resolution_pending=True)
+        decision = current_effect_decision(state, programs, registry)
+        if decision is None:  # pragma: no cover - defensive
+            raise EngineInvariantError("a paused effect exposes no decision")
+        return Transition(state, decision=decision)
     checked = _achievement_boundary(state, registry)
     if isinstance(checked, Transition):
         return checked
     advanced = _advance_after_paid_action(checked)
-    decision = current_decision(advanced, registry)
+    decision = current_decision(advanced, registry, programs)
     if decision is None:  # pragma: no cover - guarded by phase/pending checks
         raise EngineInvariantError("non-terminal state has no current decision")
     return Transition(advanced, decision=decision)
@@ -228,6 +273,7 @@ def _apply_starting_meld(
     decision: Decision,
     action: ChooseStartingMeldAction,
     registry: CardRegistry,
+    programs: EffectProgramRegistry,
 ) -> Transition:
     chooser = decision.chooser
     choices = list(state.starting_meld_choices)
@@ -237,7 +283,7 @@ def _apply_starting_meld(
         starting_meld_choices=(choices[0], choices[1]),
     )
     if any(choice is None for choice in selected.starting_meld_choices):
-        decisions = current_decisions(selected, registry)
+        decisions = current_decisions(selected, registry, programs)
         if not decisions:  # pragma: no cover - defensive
             raise EngineInvariantError("incomplete setup has no decision")
         return Transition(selected, decision=decisions[0])
@@ -264,14 +310,17 @@ def _apply_starting_meld(
     assert_state_invariants(finalized, registry)
     # No special-achievement predicate can be satisfied by two one-card age-1 stacks, so setup
     # does not need an achievement boundary check.
-    next_decision = current_decision(finalized, registry)
+    next_decision = current_decision(finalized, registry, programs)
     if next_decision is None:  # pragma: no cover - defensive
         raise EngineInvariantError("finalized setup has no first-turn decision")
     return Transition(finalized, decision=next_decision)
 
 
 def _claim_normal_achievement(
-    state: GameState, action: AchieveAction, registry: CardRegistry
+    state: GameState,
+    action: AchieveAction,
+    registry: CardRegistry,
+    programs: EffectProgramRegistry,
 ) -> Transition:
     assert state.active_player is not None
     spent = replace(
@@ -282,45 +331,88 @@ def _claim_normal_achievement(
     result = claim_normal_achievement(spent, state.active_player, action.achievement_id, registry)
     if result.terminal is not None:
         return Transition(result.state, terminal=result.terminal)
-    return _next_transition(result.state, registry)
+    return _next_transition(result.state, registry, programs)
 
 
-def _start_dogma(state: GameState, action: DogmaAction, registry: CardRegistry) -> Transition:
+def _effect_transition(
+    state: GameState,
+    status: EffectStatus,
+    registry: CardRegistry,
+    programs: EffectProgramRegistry,
+    *,
+    decision: Decision | None,
+) -> Transition:
+    """Map one :class:`EffectStatus` onto the public transition contract.
+
+    ``ABORT_DOGMA`` and ``COMPLETE`` both mean the dogma action is over; decision 7 requires the
+    abort to leave the paid action spent and any second paid action intact, which is exactly what
+    falling through to the normal post-action boundary does.
+    """
+
+    if status is EffectStatus.AWAIT_DECISION:
+        if decision is None:  # pragma: no cover - guarded by EffectResolution
+            raise EngineInvariantError("an awaiting effect returned no decision")
+        return Transition(state, decision=decision)
+    if status is EffectStatus.TERMINAL:
+        if state.terminal_result is None:  # pragma: no cover - defensive
+            raise EngineInvariantError("a terminal effect produced no terminal result")
+        return Transition(state, terminal=state.terminal_result)
+    return _next_transition(state, registry, programs)
+
+
+def _start_dogma(
+    state: GameState,
+    action: DogmaAction,
+    registry: CardRegistry,
+    programs: EffectProgramRegistry,
+) -> Transition:
     assert state.active_player is not None
-    frame = EffectFrameState(
-        "dogma-action",
-        source_card_id=action.card_id,
-        variables=(
-            EffectVariable("activator", state.active_player.value),
-            EffectVariable("dogma_action_id", state.next_dogma_action_id),
-        ),
-    )
-    updated = replace(
+    spent = replace(
         state,
         paid_actions_remaining=state.paid_actions_remaining - 1,
-        pending_effects=(frame,),
         next_decision_id=state.next_decision_id + 1,
         next_dogma_action_id=state.next_dogma_action_id + 1,
     )
-    assert_state_invariants(updated, registry)
-    return Transition(updated, effect_resolution_pending=True)
+    resolution = start_dogma(
+        spent,
+        action.card_id,
+        state.active_player,
+        programs,
+        registry,
+        dogma_action_id=state.next_dogma_action_id,
+    )
+    return _effect_transition(
+        resolution.state,
+        resolution.status,
+        registry,
+        programs,
+        decision=resolution.decision,
+    )
 
 
 def apply_action(
     state: GameState,
     action: SemanticAction,
     registry: CardRegistry | None = None,
+    programs: EffectProgramRegistry | None = None,
 ) -> Transition:
     """Apply one currently legal action without mutating ``state``.
 
-    Dogma selection creates a serializable handoff frame for WP4. All other WP3 actions return
-    the next decision or a terminal result directly.
+    A mid-dogma effect choice is routed to the effect executor; every other action is a setup
+    choice or a paid turn action. Either way the result is the next decision or a terminal result.
     """
 
     registry = registry or load_card_registry()
-    decisions = current_decisions(state, registry)
+    resolved_programs = effect_programs(programs)
+    decisions = current_decisions(state, registry, resolved_programs)
     if not decisions:
-        raise EngineInvariantError("state is terminal or awaiting effect resolution")
+        if state.phase is GamePhase.TERMINAL:
+            raise EngineInvariantError("state is terminal and cannot accept an action")
+        if state.pending_effects:
+            raise EngineInvariantError(
+                "state is between deterministic effect steps; call resume_pending_effects first"
+            )
+        raise EngineInvariantError("non-terminal state exposes no legal decision")
     decision = next(
         (candidate for candidate in decisions if candidate.decision_id == action.decision_id),
         decisions[0],
@@ -328,13 +420,21 @@ def apply_action(
     if action not in decision.legal_actions:
         raise IllegalAction(action, decision)
 
+    if state.pending_effects:
+        resolution = submit_effect_action(state, action, resolved_programs, registry)
+        return _effect_transition(
+            resolution.state,
+            resolution.status,
+            registry,
+            resolved_programs,
+            decision=resolution.decision,
+        )
     if isinstance(action, ChooseStartingMeldAction):
-        return _apply_starting_meld(state, decision, action, registry)
+        return _apply_starting_meld(state, decision, action, registry, resolved_programs)
     if state.phase is not GamePhase.PLAY or state.active_player is None:
         raise EngineInvariantError("paid action submitted outside play")
     if isinstance(action, DrawAction):
-        requested_age = highest_top_value(state.player(state.active_player).board, registry)
-        updated, _, result = draw_card(state, requested_age, state.active_player, registry)
+        updated, _, result = draw_action(state, state.active_player, registry)
         updated = replace(
             updated,
             paid_actions_remaining=updated.paid_actions_remaining - 1,
@@ -342,7 +442,7 @@ def apply_action(
         )
         if result.beyond_age_ten:
             return terminal_transition(updated, draw_beyond_age_ten_result(updated, registry))
-        return _next_transition(updated, registry)
+        return _next_transition(updated, registry, resolved_programs)
     if isinstance(action, MeldAction):
         updated, _ = meld_card(state, state.active_player, action.card_id, registry)
         updated = replace(
@@ -350,23 +450,37 @@ def apply_action(
             paid_actions_remaining=updated.paid_actions_remaining - 1,
             next_decision_id=updated.next_decision_id + 1,
         )
-        return _next_transition(updated, registry)
+        return _next_transition(updated, registry, resolved_programs)
     if isinstance(action, DogmaAction):
-        return _start_dogma(state, action, registry)
+        return _start_dogma(state, action, registry, resolved_programs)
     if isinstance(action, AchieveAction):
-        return _claim_normal_achievement(state, action, registry)
+        return _claim_normal_achievement(state, action, registry, resolved_programs)
     raise EngineInvariantError(f"turn decision contained unsupported action: {action.kind}")
 
 
-def finish_effect_resolution(state: GameState, registry: CardRegistry | None = None) -> Transition:
-    """Advance after WP4 has completely cleared a paid Dogma action's frames.
+def resume_pending_effects(
+    state: GameState,
+    registry: CardRegistry | None = None,
+    programs: EffectProgramRegistry | None = None,
+) -> Transition:
+    """Advance a state paused between deterministic effect steps to its next boundary.
 
-    This runs the achievement boundary check as a defensive final boundary, so a special
-    achievement that became eligible during the dogma action is claimed even if the effect
-    owner did not check it, and a resulting sixth-achievement victory ends the game here.
+    This exists for checkpoint replay and diagnostics. Normal play never needs it, because
+    :func:`apply_action` already resumes to a decision or terminal result.
     """
 
     registry = registry or load_card_registry()
-    if state.phase is not GamePhase.PLAY or state.pending_effects:
-        raise EngineInvariantError("effect resolution is not complete")
-    return _next_transition(state, registry)
+    resolved_programs = effect_programs(programs)
+    if state.phase is GamePhase.TERMINAL:
+        assert state.terminal_result is not None
+        return Transition(state, terminal=state.terminal_result)
+    if not state.pending_effects:
+        return _next_transition(state, registry, resolved_programs)
+    resolution = resume_effect(state, resolved_programs, registry)
+    return _effect_transition(
+        resolution.state,
+        resolution.status,
+        registry,
+        resolved_programs,
+        decision=resolution.decision,
+    )

@@ -30,9 +30,10 @@ When WP4's provenance record exists, the expected integration is a thin adapter 
 that maps one provenance batch to ``tuple[QualifyingMovement, ...]`` plus the executing player
 and then calls the functions above. No signature in this module needs to change.
 
-Per ``docs/RULES_DECISIONS.md`` decision 2, claiming an achievement is not by itself a game
-change for the sharing bonus. :attr:`AchievementCheckResult.changed` therefore reports claims
-only so that WP5 can explicitly *exclude* them from sharing-bonus eligibility.
+Per ``docs/RULES_DECISIONS.md`` decision 2, an achievement claim is a player-facing gameplay
+change and therefore qualifies an outer shared execution for the sharing bonus. The effect VM
+emits explicit achievement events from :attr:`AchievementCheckResult.claims`; this module keeps
+claim bookkeeping independent of effect provenance.
 """
 
 from __future__ import annotations

@@ -27,10 +27,12 @@ choice remains authoritative but hidden; neither board changes until both choice
 cards then meld atomically, and printed card-title order selects the first player. That player's
 first turn has one paid action. The opponent's first turn and every later turn have two.
 
-A paid Dogma selection reserves one paid action and installs a serializable `dogma-action` handoff
-frame. WP4 owns resolving that frame. The turn cannot rotate while any effect frame remains;
-`finish_effect_resolution` advances only after WP4 has cleared all frames. This preserves honest
-Dogma legality without treating unimplemented effects as no-ops.
+Effect choices use the same boundary. While a dogma or nested effect is waiting on a player,
+`current_decisions(state)` returns exactly one `EFFECT_CHOICE` decision and `apply_action()` routes
+its semantic action back into the resumable VM. A `DecisionContext` records demand/shared/nested
+flags, frozen dogma icon counts, selection bounds, and incremental progress. Deterministic
+low-level checkpoints created by `step_effect()` are resumed explicitly with
+`resume_pending_effects()`.
 
 ## Observations
 
@@ -39,7 +41,8 @@ or filters authoritative state. Under the default `rulebook-private-covered-v1` 
 
 - supplies expose age and count, never order or identities;
 - normal-achievement card identities never appear;
-- both players' hand and score values are public, but only the owner sees card IDs;
+- both players' hand and score values are public, but exact IDs are visible only to the owner or
+  while the cards carry authoritative face-up reveal markers;
 - all own board identities are visible;
 - opponent top-card IDs and splay geometry are public;
 - opponent covered IDs are hidden, and an unsplayed stack's covered count is `None`;
@@ -53,5 +56,6 @@ Leak tests compare positions differing only by hidden identities and require equ
 
 `TerminalResult` uses `TerminalReason` and canonical winner tuples; no winners means a draw.
 Actions, decisions, observations, terminal results, and authoritative state all carry schema or
-rules/policy versions. `action_payload` and `decision_payload` produce deterministic semantic
-payloads suitable for logs and process boundaries.
+rules/policy versions. State schema 2 includes multi-scope physical reveal markers; decision
+schema 2 includes effect context. `action_payload` and `decision_payload` produce deterministic
+semantic payloads suitable for logs and process boundaries.

@@ -28,14 +28,38 @@ def test_seeded_protocol_fuzz_is_deterministic_fast_and_reaches_terminal() -> No
 
 @pytest.mark.fuzz
 def test_small_seed_batch_has_stable_golden_trace_records() -> None:
+    """Golden digests pin deterministic behaviour including selected Dogma actions.
+
+    These changed deliberately when WP5 made Dogma executable: the fuzzer now selects and fully
+    resolves dogma actions for every implemented card instead of skipping them.
+    """
+
     results = run_protocol_fuzz_seeds((0, 1, 2))
 
     assert tuple(result.seed for result in results) == (0, 1, 2)
     assert tuple(result.trace_digest for result in results) == (
-        "sha256:ca5b73722aa91fb211f2bf92f61e10a8158460718c1432d34102629f1c4f60c4",
-        "sha256:5a9482f3d0c87b019aa1c13c95f6dba465c6899afa1db6b5770d94fefa763c82",
-        "sha256:6a25c4dddf7ea20d36215cbf7d4329c336d5262664f2c2189844eeeaca728152",
+        "sha256:3d28f60109a40826ca4955fa58cc3a077979da975a77121542ab017fa2483d13",
+        "sha256:5f8eafd9b5701091fed6454403730cb0a8a990c3b2314c63eff959e4f7324632",
+        "sha256:be53cca983b8cb4a852c6dacdbbbc20ac2ff2ebe4cadbb51fbc25874f9813f48",
     )
+
+
+@pytest.mark.fuzz
+def test_fuzzing_actually_selects_and_resolves_dogma_actions() -> None:
+    """WP5 gate: Dogma is no longer filtered out of the fuzzer's action set."""
+
+    from innovation_ai.innovation.actions import DogmaAction
+    from innovation_ai.innovation.effects import implemented_card_ids
+
+    implemented = implemented_card_ids()
+    selected = tuple(
+        step.action
+        for result in run_protocol_fuzz_seeds(range(0, 12))
+        for step in result.steps
+        if isinstance(step.action, DogmaAction)
+    )
+    assert selected, "the fuzzer must be able to take a Dogma action"
+    assert all(action.card_id in implemented for action in selected)
 
 
 @pytest.mark.fuzz

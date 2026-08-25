@@ -29,7 +29,7 @@ from innovation_ai.innovation.actions import AchieveAction, DrawAction, MeldActi
 from innovation_ai.innovation.protocol import (
     apply_action,
     current_decision,
-    finish_effect_resolution,
+    resume_pending_effects,
     terminal_transition,
 )
 from innovation_ai.innovation.state import (
@@ -202,11 +202,13 @@ def test_draw_action_above_age_ten_ends_the_game_with_the_documented_tie_break(
     assert transition.state.phase is GamePhase.TERMINAL
 
 
-def test_effect_resolution_handoff_runs_the_achievement_boundary_check() -> None:
+def test_resuming_with_no_pending_effects_runs_the_achievement_boundary_check() -> None:
+    """The defensive final boundary still claims an achievement the effect owner missed."""
+
     registry = card_registry()
     state = world_board(playable_state(registry), ACTIVE, registry)
 
-    resumed = finish_effect_resolution(state, registry)
+    resumed = resume_pending_effects(state, registry)
     assert resumed.state.player(ACTIVE).special_achievements == (SpecialAchievementId.WORLD,)
     assert resumed.decision is not None
 

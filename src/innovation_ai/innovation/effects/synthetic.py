@@ -1,7 +1,13 @@
-"""Representative WP4 programs used to specify primitives before the card catalog exists.
+"""Synthetic WP4 programs that specify shared VM primitives without a real card.
 
-These fixtures intentionally model only the printed effect portions needed to freeze the shared
-VM contract. They are not the Milestone 1 broad card implementations owned by WP7.
+These fixtures exist only for primitives that no implemented card exercises yet: demand plus
+mandatory exchange (Machinery), arbitrary stack rearrangement (Publications), and nested
+non-demand execution (Self Service). Pottery, Metalworking, and Fission are now real cards in
+``innovation.cards`` and their specification tests run against those production programs.
+
+The synthetic registry is deliberately separate from
+:func:`innovation_ai.innovation.effects.registry.load_effect_programs` and is never used by the
+paid-turn protocol.
 """
 
 from __future__ import annotations
@@ -13,120 +19,27 @@ from innovation_ai.innovation.types import CardId, Color, DogmaEffectId, Icon, S
 from .program import (
     ACTIVATOR,
     EXECUTOR,
-    AbortDogmaNode,
-    BatchNode,
     CardSelector,
     ChoiceKind,
     ChoiceNode,
     ConditionNode,
-    DrawNode,
     EffectProgram,
     EffectProgramRegistry,
     ExchangeNode,
-    KeepNode,
+    Extreme,
     MovementKind,
     MoveNode,
     NestedNode,
     Predicate,
     ProgramEffect,
     RearrangeNode,
-    RemoveAllPlayCardsNode,
-    RepeatNode,
-    RevealNode,
     SequenceNode,
     SplayNode,
-    ValueRef,
 )
 
 
 def _effect(card: str, ordinal: int, root: str, *, demand: bool = False) -> ProgramEffect:
     return ProgramEffect(DogmaEffectId(CardId(card), ordinal), demand, root)
-
-
-def _pottery() -> EffectProgram:
-    card = CardId("pottery")
-    return EffectProgram(
-        "synthetic-pottery-v1",
-        card,
-        (_effect("pottery", 1, "pottery-effect"),),
-        (
-            SequenceNode(
-                "pottery-effect",
-                ("choose-returns", "if-returned"),
-            ),
-            ChoiceNode(
-                "choose-returns",
-                ChoiceKind.BOUNDED_CARDS,
-                "returned",
-                cards=CardSelector.hand(),
-                minimum=0,
-                maximum=3,
-            ),
-            ConditionNode(
-                "if-returned",
-                Predicate.truthy("returned"),
-                "return-score-sequence",
-            ),
-            SequenceNode(
-                "return-score-sequence",
-                ("order-returns", "return-cards", "draw-reward", "score-reward"),
-            ),
-            ChoiceNode(
-                "order-returns",
-                ChoiceKind.ORDER_CARDS,
-                "return-order",
-                cards=CardSelector.from_variable("returned"),
-                only_effective_return_order=True,
-            ),
-            MoveNode(
-                "return-cards",
-                MovementKind.RETURN,
-                CardSelector.from_variable("return-order"),
-            ),
-            DrawNode("draw-reward", ValueRef.count("returned"), "reward"),
-            MoveNode(
-                "score-reward",
-                MovementKind.SCORE,
-                CardSelector.from_variable("reward"),
-                destination_player=EXECUTOR,
-            ),
-        ),
-    )
-
-
-def _metalworking() -> EffectProgram:
-    card = CardId("metalworking")
-    return EffectProgram(
-        "synthetic-metalworking-v1",
-        card,
-        (_effect("metalworking", 1, "metalworking-repeat"),),
-        (
-            RepeatNode(
-                "metalworking-repeat",
-                "metalworking-body",
-                Predicate.card_has_icon("drawn", Icon.CASTLE),
-            ),
-            SequenceNode(
-                "metalworking-body",
-                ("draw-one", "reveal-one", "castle-branch"),
-            ),
-            DrawNode("draw-one", ValueRef.literal(1), "drawn"),
-            RevealNode("reveal-one", CardSelector.from_variable("drawn")),
-            ConditionNode(
-                "castle-branch",
-                Predicate.card_has_icon("drawn", Icon.CASTLE),
-                "score-drawn",
-                "keep-drawn",
-            ),
-            MoveNode(
-                "score-drawn",
-                MovementKind.SCORE,
-                CardSelector.from_variable("drawn"),
-                destination_player=EXECUTOR,
-            ),
-            KeepNode("keep-drawn", CardSelector.from_variable("drawn")),
-        ),
-    )
 
 
 def _machinery() -> EffectProgram:
@@ -142,7 +55,7 @@ def _machinery() -> EffectProgram:
             ExchangeNode(
                 "machinery-demand",
                 CardSelector.hand(EXECUTOR),
-                CardSelector.hand(ACTIVATOR, highest_only=True),
+                CardSelector.hand(ACTIVATOR, extreme=Extreme.HIGHEST),
             ),
             SequenceNode(
                 "machinery-shared",
@@ -221,34 +134,6 @@ def _publications() -> EffectProgram:
     )
 
 
-def _fission() -> EffectProgram:
-    card = CardId("fission")
-    return EffectProgram(
-        "synthetic-fission-v1",
-        card,
-        (_effect("fission", 1, "fission-demand", demand=True),),
-        (
-            SequenceNode(
-                "fission-demand",
-                ("draw-ten", "red-branch"),
-            ),
-            DrawNode("draw-ten", ValueRef.literal(10), "drawn"),
-            ConditionNode(
-                "red-branch",
-                Predicate.card_color_is("drawn", Color.RED),
-                "fission-red",
-            ),
-            SequenceNode(
-                "fission-red",
-                ("mass-removal", "abort-dogma"),
-            ),
-            BatchNode("mass-removal", ("remove-all",)),
-            RemoveAllPlayCardsNode("remove-all"),
-            AbortDogmaNode("abort-dogma"),
-        ),
-    )
-
-
 def _self_service() -> EffectProgram:
     card = CardId("self-service")
     return EffectProgram(
@@ -271,17 +156,40 @@ def _self_service() -> EffectProgram:
     )
 
 
+def _bounded_selection() -> EffectProgram:
+    """A minimal optional bounded multi-select over a hand.
+
+    Used by runtime/VM tests that need a program which pauses on its very first step without
+    depending on a production card's full behaviour.
+    """
+
+    card = CardId("calendar")
+    return EffectProgram(
+        "synthetic-bounded-selection-v1",
+        card,
+        (_effect("calendar", 1, "choose-cards"),),
+        (
+            ChoiceNode(
+                "choose-cards",
+                ChoiceKind.BOUNDED_CARDS,
+                "selected",
+                cards=CardSelector.hand(EXECUTOR),
+                minimum=0,
+                maximum=3,
+            ),
+        ),
+    )
+
+
 @lru_cache(maxsize=1)
 def synthetic_program_registry() -> EffectProgramRegistry:
     """Return the immutable representative WP4 program registry."""
 
     return EffectProgramRegistry(
         (
-            _pottery(),
-            _metalworking(),
+            _bounded_selection(),
             _machinery(),
             _publications(),
-            _fission(),
             _self_service(),
         )
     )

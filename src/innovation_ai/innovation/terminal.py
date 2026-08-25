@@ -42,15 +42,23 @@ def _canonical_winners(*players: PlayerId) -> tuple[PlayerId, ...]:
 
 
 def apply_terminal(state: GameState, result: TerminalResult) -> GameState:
-    """Return ``state`` moved into its terminal phase with ``result`` recorded.
+    """Return ``state`` moved into its terminal phase with all transient runtime unwound.
 
-    Callers must stop every remaining dogma effect, sharing bonus, and paid action immediately;
-    the returned state rejects further zone mutation.
+    Terminal finalization is one atomic operation: no pending effect, scoped variable, or
+    face-up reveal marker may survive it.  Centralizing that cleanup prevents achievement,
+    draw-exhaustion, and card-effect wins from acquiring subtly different unwind behavior.
     """
 
     if state.phase is GamePhase.TERMINAL:
         raise TerminalError("a terminal game state cannot be finalized twice")
-    return replace(state, phase=GamePhase.TERMINAL, terminal_result=result)
+    return replace(
+        state,
+        phase=GamePhase.TERMINAL,
+        terminal_result=result,
+        pending_effects=(),
+        effect_variables=(),
+        revealed=(),
+    )
 
 
 def achievement_victory_result(state: GameState, player_id: PlayerId) -> TerminalResult | None:

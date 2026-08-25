@@ -9,6 +9,7 @@ from dataclasses import replace
 import pytest
 
 from innovation_ai.innovation.actions import (
+    DECISION_SCHEMA_VERSION,
     AchieveAction,
     ActionKind,
     ChooseBranchAction,
@@ -20,6 +21,7 @@ from innovation_ai.innovation.actions import (
     action_payload,
     decision_payload,
 )
+from innovation_ai.innovation.board import top_cards
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.observations import InformationPolicy, observe
 from innovation_ai.innovation.protocol import (
@@ -172,17 +174,54 @@ def test_every_enumerated_paid_action_applies_and_input_is_unchanged() -> None:
     kinds = tuple(action.kind for action in decision.legal_actions)
     assert kinds == tuple(sorted(kinds, key=tuple(ActionKind).index))
     assert any(isinstance(action, MeldAction) for action in decision.legal_actions)
-    assert any(isinstance(action, DogmaAction) for action in decision.legal_actions)
 
     for action in decision.legal_actions:
         transition = apply_action(state, action, registry)
         assert transition.state != state
-        if isinstance(action, DogmaAction):
-            assert transition.effect_resolution_pending
-            assert transition.state.pending_effects[0].source_card_id == action.card_id
-        else:
-            assert transition.decision is not None or transition.terminal is not None
+        # Every action reaches a next decision or a terminal result: there is no third
+        # "running but undecidable" outcome any more.
+        assert transition.decision is not None or transition.terminal is not None
     assert state == original
+
+
+def test_dogma_is_only_offered_for_cards_whose_effects_are_registered() -> None:
+    """An unimplemented top card must never appear as a legal Dogma action."""
+
+    from innovation_ai.innovation.effects import load_effect_programs
+
+    registry = load_card_registry()
+    programs = load_effect_programs()
+    implemented = programs.implemented_card_ids()
+    state = _finish_setup(build_setup_state(312, registry), registry)
+    decision = current_decision(state, registry)
+    assert decision is not None
+    active = state.active_player
+    assert active is not None
+    tops = set(top_cards(state.player(active).board))
+    offered = {
+        action.card_id for action in decision.legal_actions if isinstance(action, DogmaAction)
+    }
+    assert offered == tops & implemented
+
+
+def test_a_registered_dogma_action_resolves_to_a_decision_or_terminal_result() -> None:
+    registry = load_card_registry()
+    state = _finish_setup(build_setup_state(312, registry), registry)
+    # Put a known implemented card on top of the active player's board.
+    active = state.active_player
+    assert active is not None
+    state, _ = meld_card(state, active, CardId("the-wheel"), registry)
+    decision = current_decision(state, registry)
+    assert decision is not None
+    dogma = next(
+        action
+        for action in decision.legal_actions
+        if isinstance(action, DogmaAction) and action.card_id == CardId("the-wheel")
+    )
+    transition = apply_action(state, dogma, registry)
+    assert transition.decision is not None or transition.terminal is not None
+    assert not transition.state.pending_effects
+    assert transition.state.next_dogma_action_id == state.next_dogma_action_id + 1
 
 
 def test_eligible_normal_achievement_is_enumerated_and_claimed() -> None:
@@ -300,7 +339,7 @@ def test_action_and_decision_payloads_are_semantic_and_versioned() -> None:
     payload = decision_payload(decision)
     action = decision.legal_actions[0]
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == DECISION_SCHEMA_VERSION
     assert payload["decision_id"] == decision.decision_id
     assert payload["kind"] == "starting-meld"
     assert payload["legal_actions"][0] == action_payload(action)  # type: ignore[index]

@@ -38,15 +38,18 @@ from innovation_ai.innovation.state import (
 )
 
 GAME_LOG_FORMAT = "innovation-ai-game-log"
-GAME_LOG_SCHEMA_VERSION = 1
+GAME_LOG_SCHEMA_VERSION = 2
 ENGINE_VERSION = __version__
 
 
 class ReplayOutcome(StrEnum):
-    """The engine boundary present after the final logged transition."""
+    """The engine boundary present after the final logged transition.
+
+    There is no "effect resolution pending" boundary: a paused dogma action always exposes a
+    decision, so it is an ordinary ``DECISION`` boundary.
+    """
 
     DECISION = "decision"
-    EFFECT_RESOLUTION_PENDING = "effect-resolution-pending"
     TERMINAL = "terminal"
 
 
@@ -80,6 +83,7 @@ class GameLog:
     rules_version: str
     information_policy_version: str
     card_data_fingerprint: str
+    effects_fingerprint: str
     setup: SetupProvenance
     initial_state_hash: str
     transitions: tuple[LoggedTransition, ...]
@@ -125,6 +129,7 @@ def game_log_payload(log: GameLog) -> JsonObject:
         "rules_version": log.rules_version,
         "information_policy_version": log.information_policy_version,
         "card_data_fingerprint": log.card_data_fingerprint,
+        "effects_fingerprint": log.effects_fingerprint,
         "state_schema_version": log.state_schema_version,
         "action_schema_version": log.action_schema_version,
         "decision_schema_version": log.decision_schema_version,
@@ -202,6 +207,7 @@ def game_log_from_payload(value: object) -> GameLog:
         "rules_version",
         "information_policy_version",
         "card_data_fingerprint",
+        "effects_fingerprint",
         "state_schema_version",
         "action_schema_version",
         "decision_schema_version",
@@ -242,6 +248,9 @@ def game_log_from_payload(value: object) -> GameLog:
             ),
             card_data_fingerprint=_string(
                 payload["card_data_fingerprint"], "game_log.card_data_fingerprint"
+            ),
+            effects_fingerprint=_string(
+                payload["effects_fingerprint"], "game_log.effects_fingerprint"
             ),
             setup=setup_from_payload(payload["setup"]),
             initial_state_hash=_string(

@@ -146,7 +146,7 @@ def test_legal_action_completeness_detects_an_omitted_action() -> None:
         )
 
 
-def test_checked_transitions_cover_setup_turn_switch_and_pending_dogma() -> None:
+def test_checked_transitions_cover_setup_turn_switch_and_a_real_dogma_action() -> None:
     registry = load_card_registry()
     state = build_setup_state(1004, registry)
     snapshot = clone_state(state)
@@ -159,12 +159,21 @@ def test_checked_transitions_cover_setup_turn_switch_and_pending_dogma() -> None
     assert first.state.turn_number == 2
     assert first.state.paid_actions_remaining == 2
 
-    decision = first.decision
+    # Meld a known implemented card so a Dogma action is available regardless of the seed.
+    active = first.state.active_player
+    assert active is not None
+    melded, _ = meld_card(first.state, active, CardId("the-wheel"), registry)
+    decision = current_decision(melded, registry)
     assert decision is not None
-    dogma = next(action for action in decision.legal_actions if isinstance(action, DogmaAction))
-    pending = checked_apply_action(first.state, dogma, registry)
-    assert pending.effect_resolution_pending
-    assert pending.state.pending_effects
+    dogma = next(
+        action
+        for action in decision.legal_actions
+        if isinstance(action, DogmaAction) and action.card_id == CardId("the-wheel")
+    )
+    resolved = checked_apply_action(melded, dogma, registry)
+    # A dogma action now always resolves to a decision or a terminal result.
+    assert resolved.decision is not None or resolved.terminal is not None
+    assert not resolved.state.pending_effects
 
 
 def test_progression_validator_rejects_a_transition_that_skips_turns() -> None:
@@ -263,17 +272,45 @@ def test_terminal_state_rejects_every_current_public_mutation_entry_point() -> N
     assert_terminal_immutability(terminal, registry)
 
 
-def test_terminal_and_pending_states_expose_no_wp3_actions() -> None:
+def test_terminal_exposes_no_action_and_a_paused_effect_exposes_exactly_one_decision() -> None:
     registry = load_card_registry()
     terminal = _terminal_by_exhaustion(build_setup_state(1009, registry), registry)
     assert_legal_action_completeness(terminal, registry)
+    assert current_decisions(terminal, registry) == ()
 
-    state = _finish_setup(build_setup_state(1010, registry), registry)
-    decision = current_decision(state, registry)
-    assert decision is not None
-    dogma = next(action for action in decision.legal_actions if isinstance(action, DogmaAction))
-    pending = checked_apply_action(state, dogma, registry).state
-    assert_legal_action_completeness(pending, registry)
+    # A mid-dogma state must be decidable: a running engine that asks nothing is undecidable
+    # for a runner, a fuzzer, and a replay alike.
+    from innovation_ai.innovation.effects import load_effect_programs, start_dogma
+    from innovation_ai.innovation.state import ExplicitPlayerPosition, build_explicit_state
+
+    programs = load_effect_programs()
+    paused = start_dogma(
+        build_explicit_state(
+            registry,
+            positions=(
+                (
+                    PlayerId.PLAYER_1,
+                    ExplicitPlayerPosition(
+                        board=((Color.PURPLE, (CardId("code-of-laws"),)),),
+                        hand=(CardId("city-states"),),
+                    ),
+                ),
+                (
+                    PlayerId.PLAYER_2,
+                    ExplicitPlayerPosition(board=((Color.BLUE, (CardId("pottery"),)),)),
+                ),
+            ),
+        ),
+        CardId("code-of-laws"),
+        PlayerId.PLAYER_1,
+        programs,
+        registry,
+    ).state
+    assert paused.pending_effects
+    decisions = current_decisions(paused, registry)
+    assert len(decisions) == 1
+    assert decisions[0].context is not None
+    assert_legal_action_completeness(paused, registry)
 
 
 def test_leak_validator_rejects_vacuous_equal_states() -> None:

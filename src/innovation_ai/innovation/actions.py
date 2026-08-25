@@ -12,13 +12,14 @@ from innovation_ai.innovation.types import (
     CardId,
     Color,
     DogmaEffectId,
+    Icon,
     NormalAchievementId,
     PlayerId,
     SplayDirection,
 )
 
 ACTION_SCHEMA_VERSION = 1
-DECISION_SCHEMA_VERSION = 1
+DECISION_SCHEMA_VERSION = 2
 _BRANCH_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -228,6 +229,37 @@ class DecisionSource:
 
 
 @dataclass(frozen=True, slots=True)
+class DecisionContext:
+    """Dogma and selection context a policy needs to read a decision's semantics.
+
+    Without this, a forced demand compliance and a voluntary choice are indistinguishable in a
+    log or to a policy encoder, because both arrive as "choose one of these cards".
+    """
+
+    demand: bool = False
+    shared: bool = False
+    nested: bool = False
+    featured_icon: Icon | None = None
+    activator_icons: int | None = None
+    opponent_icons: int | None = None
+    minimum_count: int = 1
+    maximum_count: int = 1
+    selected_so_far: tuple[CardId, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.minimum_count < 0 or self.maximum_count < self.minimum_count:
+            raise ValueError("invalid decision selection bounds")
+        if (self.activator_icons is None) != (self.opponent_icons is None):
+            raise ValueError("frozen icon counts must be supplied together")
+        if self.activator_icons is not None and self.activator_icons < 0:
+            raise ValueError("frozen icon counts cannot be negative")
+        if self.opponent_icons is not None and self.opponent_icons < 0:
+            raise ValueError("frozen icon counts cannot be negative")
+        if len(set(self.selected_so_far)) != len(self.selected_so_far):
+            raise ValueError("an incremental selection cannot repeat a card")
+
+
+@dataclass(frozen=True, slots=True)
 class Decision:
     """One player-safe, deterministic set of legal semantic actions."""
 
@@ -240,6 +272,7 @@ class Decision:
     source: DecisionSource | None = None
     dogma_activator: PlayerId | None = None
     dogma_action_id: int | None = None
+    context: DecisionContext | None = None
     schema_version: int = DECISION_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -294,6 +327,7 @@ def decision_payload(decision: Decision) -> dict[str, object]:
         "source": _payload_value(decision.source),
         "dogma_activator": _payload_value(decision.dogma_activator),
         "dogma_action_id": decision.dogma_action_id,
+        "context": _payload_value(decision.context),
         "observation": _payload_value(decision.observation),
         "legal_actions": [action_payload(action) for action in decision.legal_actions],
     }

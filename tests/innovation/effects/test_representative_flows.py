@@ -10,24 +10,17 @@ from innovation_ai.innovation.actions import (
     ChooseColorAction,
     Decision,
     DeclineAction,
-    FinishSelectionAction,
-    OrderCardsAction,
     SemanticAction,
 )
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.effects import (
     EffectContext,
-    EffectEventKind,
     EffectStatus,
-    current_effect_decision,
     effect_runtime_payload,
     restore_effect_runtime,
-    resume_effect,
     start_effect,
-    step_effect,
     submit_effect_action,
 )
-from innovation_ai.innovation.effects.model import frame_value
 from innovation_ai.innovation.effects.synthetic import synthetic_program_registry
 from innovation_ai.innovation.state import GamePhase, GameState, build_setup_state, state_hash
 from innovation_ai.innovation.types import CardId, Color, PlayerId, SplayDirection
@@ -38,8 +31,6 @@ from innovation_ai.innovation.zones import (
     locate_card,
     meld_card,
     move_card,
-    return_card,
-    score_card,
     set_splay,
 )
 
@@ -125,121 +116,6 @@ def _action(
     raise AssertionError(f"no {action_type.__name__} action found")
 
 
-def test_pottery_bounded_selection_order_round_trips_and_decline() -> None:
-    registry = load_card_registry()
-    state = _play_state(registry)
-    state, _ = meld_card(state, PlayerId.PLAYER_1, CardId("pottery"), registry)
-    state = _move_to_hand(state, PlayerId.PLAYER_1, CardId("sailing"), registry)
-    state = _move_to_hand(state, PlayerId.PLAYER_1, CardId("the-wheel"), registry)
-
-    started = start_effect(
-        state,
-        "synthetic-pottery-v1",
-        _context(state, "pottery"),
-        PROGRAMS,
-        registry,
-    )
-    assert started.status is EffectStatus.AWAIT_DECISION
-    paused = _round_trip(started.state)
-    decision = current_effect_decision(paused, PROGRAMS, registry)
-    assert decision == started.decision
-    assert decision is not None
-    assert isinstance(decision.legal_actions[-1], FinishSelectionAction)
-
-    first = _action(decision, ChooseCardAction, CardId("sailing"))
-    after_first = submit_effect_action(paused, first, PROGRAMS, registry)
-    assert after_first.status is EffectStatus.AWAIT_DECISION
-    paused = _round_trip(after_first.state)
-    second = _action(after_first.decision, ChooseCardAction, CardId("the-wheel"))
-    after_second = submit_effect_action(paused, second, PROGRAMS, registry)
-    assert after_second.status is EffectStatus.AWAIT_DECISION
-    finish = _action(after_second.decision, FinishSelectionAction)
-    ordering = submit_effect_action(
-        _round_trip(after_second.state),
-        finish,
-        PROGRAMS,
-        registry,
-    )
-    assert ordering.status is EffectStatus.AWAIT_DECISION
-    assert ordering.decision is not None
-    assert all(isinstance(action, OrderCardsAction) for action in ordering.decision.legal_actions)
-    chosen_order = next(
-        action
-        for action in ordering.decision.legal_actions
-        if isinstance(action, OrderCardsAction)
-        and action.card_ids == (CardId("the-wheel"), CardId("sailing"))
-    )
-
-    restored = _round_trip(ordering.state)
-    completed = submit_effect_action(restored, chosen_order, PROGRAMS, registry)
-    direct = submit_effect_action(ordering.state, chosen_order, PROGRAMS, registry)
-    assert completed.status is EffectStatus.COMPLETE
-    assert state_hash(completed.state) == state_hash(direct.state)
-    assert completed.state.supply.pile(1)[-2:] == (
-        CardId("the-wheel"),
-        CardId("sailing"),
-    )
-    assert sum(registry.card(card).age for card in completed.state.players[0].score_pile) >= 2
-    assert any(
-        event.change and event.change.kind is ChangeKind.RETURN for event in completed.events
-    )
-    assert any(event.change and event.change.kind is ChangeKind.SCORE for event in completed.events)
-
-    declined = start_effect(
-        state,
-        "synthetic-pottery-v1",
-        _context(state, "pottery"),
-        PROGRAMS,
-        registry,
-    )
-    decline = _action(declined.decision, FinishSelectionAction)
-    declined = submit_effect_action(declined.state, decline, PROGRAMS, registry)
-    assert declined.status is EffectStatus.COMPLETE
-    assert not declined.events
-
-
-def test_metalworking_repeat_reveal_branch_is_checkpoint_resumable() -> None:
-    registry = load_card_registry()
-    state = _play_state(registry)
-    state, _ = meld_card(state, PlayerId.PLAYER_1, CardId("metalworking"), registry)
-    state, _ = return_card(state, CardId("agriculture"), registry)
-    pile = tuple(
-        card
-        for card in state.supply.pile(1)
-        if card not in {CardId("archery"), CardId("agriculture")}
-    )
-    state = replace(
-        state,
-        supply=state.supply.replace_pile(1, (CardId("archery"), CardId("agriculture"), *pile)),
-    )
-    started = start_effect(
-        state,
-        "synthetic-metalworking-v1",
-        _context(state, "metalworking"),
-        PROGRAMS,
-        registry,
-        pause_before_first_step=True,
-    )
-
-    checkpoint = started.state
-    for _ in range(8):
-        checkpoint = _round_trip(checkpoint)
-        result = step_effect(checkpoint, PROGRAMS, registry)
-        checkpoint = result.state
-        if result.status is not EffectStatus.CONTINUE:
-            break
-    restored = _round_trip(checkpoint)
-    completed = resume_effect(restored, PROGRAMS, registry)
-    assert completed.status is EffectStatus.COMPLETE
-    assert CardId("archery") in completed.state.player(PlayerId.PLAYER_1).score_pile
-    assert CardId("agriculture") in completed.state.player(PlayerId.PLAYER_1).hand
-    assert sum(event.kind is EffectEventKind.REVEAL for event in completed.events) >= 1
-    assert any(event.kind is EffectEventKind.KEEP for event in completed.events)
-
-    direct = resume_effect(started.state, PROGRAMS, registry)
-    assert state_hash(completed.state) == state_hash(direct.state)
-
-
 def test_machinery_demand_exchange_is_atomic_and_has_full_provenance() -> None:
     registry = load_card_registry()
     state = _play_state(registry)
@@ -304,21 +180,26 @@ def test_publications_arbitrary_order_preserves_splay_and_round_trips() -> None:
     assert result.status is EffectStatus.AWAIT_DECISION
     color = _action(result.decision, ChooseColorAction)
     result = submit_effect_action(_round_trip(result.state), color, PROGRAMS, registry)
-    assert result.status is EffectStatus.AWAIT_DECISION
-    assert result.decision is not None
+
+    # Arbitrary rearrangement is resolved incrementally: the chooser names the next card each
+    # time, so ordering k cards costs at most k decisions of at most k actions rather than k!
+    # actions. The final card is forced, so it needs no decision at all.
     original = state.player(PlayerId.PLAYER_1).board.stack(Color.BLUE).cards
-    reverse = next(
-        action
-        for action in result.decision.legal_actions
-        if isinstance(action, OrderCardsAction) and action.card_ids == tuple(reversed(original))
-    )
-    result = submit_effect_action(_round_trip(result.state), reverse, PROGRAMS, registry)
+    for expected in tuple(reversed(original))[:-1]:
+        assert result.status is EffectStatus.AWAIT_DECISION
+        assert result.decision is not None
+        assert all(isinstance(action, ChooseCardAction) for action in result.decision.legal_actions)
+        assert len(result.decision.legal_actions) <= len(original)
+        action = _action(result.decision, ChooseCardAction, expected)
+        result = submit_effect_action(_round_trip(result.state), action, PROGRAMS, registry)
+
     assert result.status is EffectStatus.COMPLETE
     stack = result.state.player(PlayerId.PLAYER_1).board.stack(Color.BLUE)
     assert stack.cards == tuple(reversed(original))
     assert stack.splay is SplayDirection.RIGHT
-    assert result.events[0].change is not None
-    assert result.events[0].change.kind is ChangeKind.REARRANGE
+    rearrange = next(event for event in result.events if event.change is not None)
+    assert rearrange.change is not None
+    assert rearrange.change.kind is ChangeKind.REARRANGE
 
     decline = start_effect(
         state,
@@ -330,83 +211,6 @@ def test_publications_arbitrary_order_preserves_splay_and_round_trips() -> None:
     action = _action(decline.decision, DeclineAction)
     decline = submit_effect_action(decline.state, action, PROGRAMS, registry)
     assert decline.status is EffectStatus.COMPLETE
-
-
-def test_fission_mass_removal_aborts_dogma_but_preserves_turn_and_achievements() -> None:
-    registry = load_card_registry()
-    state = _play_state(registry)
-    state, _ = meld_card(state, PlayerId.PLAYER_1, CardId("fission"), registry)
-    state, _ = score_card(state, PlayerId.PLAYER_2, CardId("agriculture"), registry)
-    red_ten = CardId("robotics")
-    pile = tuple(card for card in state.supply.pile(10) if card != red_ten)
-    state = replace(state, supply=state.supply.replace_pile(10, (red_ten, *pile)))
-    paid_actions = state.paid_actions_remaining
-    achievements = tuple(
-        (player.normal_achievements, player.special_achievements) for player in state.players
-    )
-
-    result = start_effect(
-        state,
-        "synthetic-fission-v1",
-        _context(
-            state,
-            "fission",
-            executor=PlayerId.PLAYER_2,
-            activator=PlayerId.PLAYER_1,
-            shared=True,
-        ),
-        PROGRAMS,
-        registry,
-        pause_before_first_step=True,
-    )
-    checkpoint = result.state
-    while True:
-        top = checkpoint.pending_effects[-1]
-        if frame_value(top, "node_id") == "mass-removal":
-            break
-        checkpoint = step_effect(checkpoint, PROGRAMS, registry).state
-    restored = _round_trip(checkpoint)
-    result = resume_effect(restored, PROGRAMS, registry)
-    assert result.status is EffectStatus.ABORT_DOGMA
-    assert result.state.paid_actions_remaining == paid_actions
-    assert all(not player.hand and not player.score_pile for player in result.state.players)
-    assert all(not stack.cards for player in result.state.players for stack in player.board.stacks)
-    assert (
-        tuple(
-            (player.normal_achievements, player.special_achievements)
-            for player in result.state.players
-        )
-        == achievements
-    )
-    removal = next(event for event in result.events if event.kind is EffectEventKind.CHANGE)
-    assert removal.change is not None and removal.change.kind is ChangeKind.REMOVE
-    assert removal.atomic_group_id is not None
-    assert result.events[-1].kind is EffectEventKind.ABORT_DOGMA
-
-
-def test_fission_non_red_draw_does_not_abort_or_remove() -> None:
-    registry = load_card_registry()
-    state = _play_state(registry)
-    state, _ = meld_card(state, PlayerId.PLAYER_1, CardId("fission"), registry)
-    non_red = CardId("databases")
-    pile = tuple(card for card in state.supply.pile(10) if card != non_red)
-    state = replace(state, supply=state.supply.replace_pile(10, (non_red, *pile)))
-    before_board_count = sum(
-        len(stack.cards) for player in state.players for stack in player.board.stacks
-    )
-    result = start_effect(
-        state,
-        "synthetic-fission-v1",
-        _context(state, "fission", executor=PlayerId.PLAYER_2),
-        PROGRAMS,
-        registry,
-    )
-    assert result.status is EffectStatus.COMPLETE
-    assert (
-        sum(len(stack.cards) for player in result.state.players for stack in player.board.stacks)
-        == before_board_count
-    )
-    assert non_red in result.state.player(PlayerId.PLAYER_2).hand
 
 
 def test_self_service_nested_execution_skips_demand_and_preserves_outer_cause() -> None:

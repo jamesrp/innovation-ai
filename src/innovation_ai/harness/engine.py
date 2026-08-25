@@ -7,6 +7,8 @@ from typing import Protocol
 
 from innovation_ai.innovation.actions import Decision, SemanticAction
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
+from innovation_ai.innovation.effects.program import EffectProgramRegistry
+from innovation_ai.innovation.effects.registry import load_effect_programs
 from innovation_ai.innovation.protocol import apply_action, current_decisions
 from innovation_ai.innovation.state import (
     GameState,
@@ -37,14 +39,14 @@ class RunnerEngine[StateT](Protocol):
 
 @dataclass(frozen=True, slots=True)
 class InnovationEngineAdapter:
-    """Runner adapter over the current frozen Innovation engine APIs.
+    """Runner adapter over the Innovation engine's public transition API.
 
-    Freeze A hands a selected Dogma action to later effect work by installing a pending frame.
-    Until that resolver lands, such a state honestly has no player decision and is reported by
-    runners as blocked rather than treating dogma as a no-op.
+    Every state that is not terminal exposes at least one player decision, including a state
+    paused mid-dogma, so the runner never has to treat a running game as blocked.
     """
 
     registry: CardRegistry = field(default_factory=load_card_registry)
+    programs: EffectProgramRegistry = field(default_factory=load_effect_programs)
 
     def initial_state(self, seed: int, /) -> GameState:
         """Build the seeded Innovation setup state."""
@@ -54,12 +56,12 @@ class InnovationEngineAdapter:
     def pending_decisions(self, state: GameState, /) -> tuple[Decision, ...]:
         """Project the engine's current player decisions."""
 
-        return current_decisions(state, self.registry)
+        return current_decisions(state, self.registry, self.programs)
 
     def apply(self, state: GameState, action: SemanticAction, /) -> GameState:
-        """Apply through the frozen pure transition API."""
+        """Apply through the pure transition API."""
 
-        return apply_action(state, action, self.registry).state
+        return apply_action(state, action, self.registry, self.programs).state
 
     def terminal_result(self, state: GameState, /) -> TerminalResult | None:
         """Read the state's typed terminal result."""

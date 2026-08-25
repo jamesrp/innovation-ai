@@ -184,6 +184,13 @@ recorded in `docs/ROADMAP.md`.
 **Tests:** decision while cards remain face-up; reveal marker cleared on keep/return/score;
 subsequent decision does not leak a now-hidden identity.
 
+## Freeze-B implementation status
+
+The shared mechanisms required by decisions 2–7 and 10–18 are frozen in
+`docs/WP5_FREEZE_B_CONTRACT.md` as of August 25, 2026. Six production cards exercise the vertical
+slice; the 99-card WP7 breadth gap is enumerated there and is not silently treated as no-op
+behavior.
+
 ## Contract implications discovered during review
 
 - Observations expose public hand/score value multisets, not only counts.

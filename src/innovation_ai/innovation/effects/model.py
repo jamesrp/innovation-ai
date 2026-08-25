@@ -7,19 +7,57 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import StrEnum
 
 from innovation_ai.innovation.actions import Decision, SemanticAction
-from innovation_ai.innovation.protocol import IllegalAction
+from innovation_ai.innovation.errors import IllegalAction
 from innovation_ai.innovation.state import (
     EffectFrameState,
     EffectVariable,
     GameState,
     StateValue,
 )
-from innovation_ai.innovation.types import CardId, DogmaEffectId, PlayerId
+from innovation_ai.innovation.types import (
+    CardId,
+    DogmaEffectId,
+    Icon,
+    NormalAchievementId,
+    PlayerId,
+    SpecialAchievementId,
+)
 from innovation_ai.innovation.zones import ChangeRecord
 
-EFFECT_RUNTIME_SCHEMA_VERSION = 1
-EFFECT_EVENT_SCHEMA_VERSION = 1
+EFFECT_RUNTIME_SCHEMA_VERSION = 2
+EFFECT_EVENT_SCHEMA_VERSION = 2
 _SCOPE_PART = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+DOGMA_FRAME = "dogma-action"
+"""Frame kind installed by the paid Dogma action and stepped by WP5's orchestrator."""
+
+DOGMA_FEATURED_ICON = "featured_icon"
+DOGMA_ACTIVATOR_ICONS = "activator_icons"
+DOGMA_OPPONENT_ICONS = "opponent_icons"
+
+
+def frozen_icon_counts(state: GameState) -> tuple[Icon, int, int] | None:
+    """Return the dogma action's frozen ``(featured icon, activator, opponent)`` counts.
+
+    The counts are frozen once at the start of the Dogma action (rules 8.1) and stored in the
+    orchestration frame, so this is a pure read: splaying mid-dogma cannot change them.
+    """
+
+    for frame in state.pending_effects:
+        if frame.kind != DOGMA_FRAME:
+            continue
+        icon = frame_value(frame, DOGMA_FEATURED_ICON)
+        activator = frame_value(frame, DOGMA_ACTIVATOR_ICONS)
+        opponent = frame_value(frame, DOGMA_OPPONENT_ICONS)
+        if (
+            isinstance(icon, str)
+            and isinstance(activator, int)
+            and not isinstance(activator, bool)
+            and isinstance(opponent, int)
+            and not isinstance(opponent, bool)
+        ):
+            return Icon(icon), activator, opponent
+    return None
 
 
 class EffectStatus(StrEnum):
@@ -38,6 +76,7 @@ class EffectEventKind(StrEnum):
     CHANGE = "change"
     REVEAL = "reveal"
     KEEP = "keep"
+    ACHIEVEMENT = "achievement"
     ABORT_DOGMA = "abort-dogma"
 
 
@@ -103,7 +142,7 @@ class EffectContext:
         )
 
     def for_nested(self, source_card_id: CardId, suffix: str) -> EffectContext:
-        """Derive an isolated nested scope with sharing/demand disabled."""
+        """Derive an isolated nested scope while preserving outer shared attribution."""
 
         if _SCOPE_PART.fullmatch(suffix) is None:
             raise ValueError(f"invalid nested scope suffix: {suffix!r}")
@@ -138,6 +177,8 @@ class EffectEvent:
     nested: bool
     change: ChangeRecord | None = None
     card_ids: tuple[CardId, ...] = ()
+    achievement_player: PlayerId | None = None
+    achievement_id: NormalAchievementId | SpecialAchievementId | None = None
     atomic_group_id: int | None = None
     schema_version: int = EFFECT_EVENT_SCHEMA_VERSION
 
@@ -155,11 +196,18 @@ class EffectEvent:
             raise ValueError("atomic group ID must be positive")
         if len(set(self.card_ids)) != len(self.card_ids):
             raise ValueError("event card IDs cannot contain duplicates")
+        has_achievement = self.achievement_player is not None or self.achievement_id is not None
+        if has_achievement != (self.kind is EffectEventKind.ACHIEVEMENT):
+            raise ValueError("only an achievement event carries claim provenance")
+        if (self.achievement_player is None) != (self.achievement_id is None):
+            raise ValueError("achievement player and ID must be supplied together")
 
     @property
     def changed(self) -> bool:
-        """Whether this event is a qualifying physical or geometry change."""
+        """Whether this event represents a sharing-qualifying gameplay change."""
 
+        if self.kind in {EffectEventKind.REVEAL, EffectEventKind.ACHIEVEMENT}:
+            return True
         return self.change is not None and self.change.changed
 
 
@@ -350,6 +398,77 @@ def frame_context(frame: EffectFrameState) -> EffectContext:
     )
 
 
+def validate_effect_runtime_structure(state: GameState) -> None:
+    """Reject malformed serialized frame stacks before the VM attempts to execute them."""
+
+    if not state.pending_effects:
+        if state.effect_variables or state.revealed:
+            raise ValueError("effect variables and reveals require pending frames")
+        return
+
+    known_kinds = {DOGMA_FRAME, "effect-program", "effect-node"}
+    root_scopes: set[str] = set()
+    live_roots: set[str] = set()
+    for frame in state.pending_effects:
+        if frame.kind not in known_kinds:
+            raise ValueError(f"unknown effect frame kind: {frame.kind!r}")
+        context = frame_context(frame)
+        root_scope = context.scope.split("/", maxsplit=1)[0]
+        live_roots.add(root_scope)
+        nested_depth = frame_value(frame, "nested_depth", 0)
+        if not isinstance(nested_depth, int) or isinstance(nested_depth, bool) or nested_depth < 0:
+            raise ValueError("effect frame has an invalid nested depth")
+        if frame.kind == DOGMA_FRAME:
+            root_scopes.add(root_scope)
+            featured = frame_value(frame, DOGMA_FEATURED_ICON)
+            activator_icons = frame_value(frame, DOGMA_ACTIVATOR_ICONS)
+            opponent_icons = frame_value(frame, DOGMA_OPPONENT_ICONS)
+            shared_change = frame_value(frame, "shared_change")
+            if not isinstance(featured, str):
+                raise ValueError("dogma frame is missing its featured icon")
+            Icon(featured)
+            for name, value in (
+                (DOGMA_ACTIVATOR_ICONS, activator_icons),
+                (DOGMA_OPPONENT_ICONS, opponent_icons),
+            ):
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    raise ValueError(f"dogma frame field {name!r} is invalid")
+            if not isinstance(shared_change, bool):
+                raise ValueError("dogma frame is missing its shared-change flag")
+            continue
+        program_id = frame_value(frame, "program_id")
+        if not isinstance(program_id, str) or not program_id:
+            raise ValueError("effect frame is missing its program ID")
+        if frame.kind == "effect-program":
+            for name in ("non_demand_only", "root_program"):
+                if not isinstance(frame_value(frame, name), bool):
+                    raise ValueError(f"program frame field {name!r} is invalid")
+            ordinal = frame_value(frame, "selected_effect_ordinal")
+            if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal < 0:
+                raise ValueError("program frame has an invalid selected effect ordinal")
+            if frame_value(frame, "root_program") is True:
+                root_scopes.add(root_scope)
+        else:
+            node_id = frame_value(frame, "node_id")
+            if not isinstance(node_id, str) or not node_id:
+                raise ValueError("node frame is missing its node ID")
+
+    if not root_scopes:
+        raise ValueError("effect runtime has no root orchestration frame")
+    variable_names = {variable.name for variable in state.effect_variables}
+    for root_scope in root_scopes:
+        required = {
+            f"{root_scope}:step-count",
+            f"{root_scope}:qualifying-change-count",
+            f"{root_scope}:nested-count",
+        }
+        if not required <= variable_names:
+            raise ValueError("root effect runtime is missing serialized VM counters")
+    for marker in state.revealed:
+        if marker.scope.split("/", maxsplit=1)[0] not in live_roots:
+            raise ValueError("reveal marker belongs to a dead effect scope")
+
+
 def _payload_value(value: object) -> object:
     if isinstance(value, StrEnum):
         return value.value
@@ -452,19 +571,7 @@ def restore_effect_runtime(
         pending_effects=tuple(frames),
         effect_variables=tuple(parsed_effect_variables),
     )
-    variable_names = {variable.name for variable in restored.effect_variables}
-    for frame in restored.pending_effects:
-        if frame.kind != "effect-program" or frame_value(frame, "root_program") is not True:
-            continue
-        context = frame_context(frame)
-        root_scope = context.scope.split("/", maxsplit=1)[0]
-        required = {
-            f"{root_scope}:step-count",
-            f"{root_scope}:qualifying-change-count",
-            f"{root_scope}:nested-count",
-        }
-        if not required <= variable_names:
-            raise ValueError("root effect runtime is missing serialized VM counters")
+    validate_effect_runtime_structure(restored)
     if programs is not None:
         from innovation_ai.innovation.effects.program import EffectProgramRegistry
 

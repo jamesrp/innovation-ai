@@ -21,6 +21,7 @@ from innovation_ai.innovation.actions import (
     ChooseStartingMeldAction,
     ChooseValueAction,
     Decision,
+    DecisionContext,
     DecisionKind,
     DecisionSource,
     DeclineAction,
@@ -58,6 +59,7 @@ from innovation_ai.innovation.state import (
     NormalAchievementState,
     PlayerState,
     PlayerTurnCounters,
+    RevealedCard,
     SetupProvenance,
     StateValue,
     SupplyState,
@@ -117,6 +119,12 @@ def _integer(value: JsonValue, path: str) -> int:
 
 def _optional_integer(value: JsonValue, path: str) -> int | None:
     return None if value is None else _integer(value, path)
+
+
+def _boolean(value: JsonValue, path: str) -> bool:
+    if not isinstance(value, bool):
+        raise SerializationError(f"{path} must be a boolean")
+    return value
 
 
 def _optional_string(value: JsonValue, path: str) -> str | None:
@@ -361,6 +369,7 @@ def observation_from_payload(value: object) -> GameObservation:
             "available_special_achievements",
             "information_policy",
             "rules_version",
+            "revealed_cards",
             "schema_version",
         },
         "observation",
@@ -407,6 +416,7 @@ def observation_from_payload(value: object) -> GameObservation:
             InformationPolicy, payload["information_policy"], "observation.information_policy"
         ),
         rules_version=_string(payload["rules_version"], "observation.rules_version"),
+        revealed_cards=_cards(payload["revealed_cards"], "observation.revealed_cards"),
     )
 
 
@@ -444,6 +454,7 @@ def decision_from_payload(value: object) -> Decision:
             "source",
             "dogma_activator",
             "dogma_action_id",
+            "context",
             "observation",
             "legal_actions",
         },
@@ -459,11 +470,49 @@ def decision_from_payload(value: object) -> Decision:
         source=_decision_source(payload["source"]),
         dogma_activator=PlayerId(dogma_activator) if dogma_activator is not None else None,
         dogma_action_id=_optional_integer(payload["dogma_action_id"], "decision.dogma_action_id"),
+        context=_decision_context(payload["context"]),
         observation=observation_from_payload(payload["observation"]),
         legal_actions=tuple(
             action_from_payload(item)
             for item in _list(payload["legal_actions"], "decision.legal_actions")
         ),
+    )
+
+
+def _decision_context(value: JsonValue) -> DecisionContext | None:
+    if value is None:
+        return None
+    payload = _object(value, "decision.context")
+    _keys(
+        payload,
+        {
+            "demand",
+            "shared",
+            "nested",
+            "featured_icon",
+            "activator_icons",
+            "opponent_icons",
+            "minimum_count",
+            "maximum_count",
+            "selected_so_far",
+        },
+        "decision.context",
+    )
+    icon = payload["featured_icon"]
+    return DecisionContext(
+        demand=_boolean(payload["demand"], "decision.context.demand"),
+        shared=_boolean(payload["shared"], "decision.context.shared"),
+        nested=_boolean(payload["nested"], "decision.context.nested"),
+        featured_icon=None if icon is None else _enum(Icon, icon, "decision.context.featured_icon"),
+        activator_icons=_optional_integer(
+            payload["activator_icons"], "decision.context.activator_icons"
+        ),
+        opponent_icons=_optional_integer(
+            payload["opponent_icons"], "decision.context.opponent_icons"
+        ),
+        minimum_count=_integer(payload["minimum_count"], "decision.context.minimum_count"),
+        maximum_count=_integer(payload["maximum_count"], "decision.context.maximum_count"),
+        selected_so_far=_cards(payload["selected_so_far"], "decision.context.selected_so_far"),
     )
 
 
@@ -598,6 +647,7 @@ def state_from_payload(
             "turn_counters",
             "pending_effects",
             "effect_variables",
+            "revealed",
             "starting_meld_decision_ids",
             "starting_meld_choices",
             "next_decision_id",
@@ -659,6 +709,16 @@ def state_from_payload(
                 ),
             )
         )
+    revealed: list[RevealedCard] = []
+    for item in _list(payload["revealed"], "state.revealed"):
+        marker = _object(item, "state.revealed[]")
+        _keys(marker, {"card_id", "scope"}, "state.revealed[]")
+        revealed.append(
+            RevealedCard(
+                CardId(_string(marker["card_id"], "state.revealed[].card_id")),
+                _string(marker["scope"], "state.revealed[].scope"),
+            )
+        )
     choices: list[CardId | None] = []
     for item in _list(payload["starting_meld_choices"], "state.starting_meld_choices"):
         raw = _optional_string(item, "state.starting_meld_choices[]")
@@ -688,6 +748,7 @@ def state_from_payload(
             _effect_variable(item, "state.effect_variables[]")
             for item in _list(payload["effect_variables"], "state.effect_variables")
         ),
+        revealed=tuple(revealed),
         starting_meld_decision_ids=cast(
             tuple[int, int],
             tuple(
@@ -710,6 +771,12 @@ def state_from_payload(
             payload["information_policy_version"], "state.information_policy_version"
         ),
     )
+    from innovation_ai.innovation.effects.model import validate_effect_runtime_structure
+
+    try:
+        validate_effect_runtime_structure(state)
+    except (ValueError, RuntimeError) as error:
+        raise SerializationError(f"invalid effect runtime: {error}") from error
     if check_compatibility:
         registry = registry or load_card_registry()
         if state.rules_version != RULES_VERSION:
