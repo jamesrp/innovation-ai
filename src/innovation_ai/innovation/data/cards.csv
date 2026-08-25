@@ -1,0 +1,106 @@
+Name,Age,Color,Dogma 1,Dogma 2,Dogma 3,Main Symbol,Symbol 1,Symbol 2,Symbol 3,Symbol 4,Symbol 5,Symbol 6
+AGRICULTURE,1,yellow,"You may return a card from your hand. If you do, draw and score a card of value one higher than the card you returned.",,,leaf,hex,,,leaf,leaf,leaf
+ARCHERY,1,red,"I demand you draw a 1, then transfer the highest card in your hand to my hand!",,,castle,castle,,,bulb,hex,castle
+CITY STATES,1,purple,"I demand you transfer a top card with a castle from your board to my board if you have at least four castle on your board! If you do, draw a 1!",,,crown,hex,,,crown,crown,castle
+CLOTHING,1,green,Meld a card from your hand of different color from any card on your board.,Draw and score a 1 for each color present on your board not present on any other player's board.,,leaf,hex,,,crown,leaf,leaf
+CODE OF LAWS,1,purple,"You may tuck a card from your hand of the same color as any card on your board. If you do, you may splay that color of your cards left.",,,crown,hex,,,crown,crown,leaf
+DOMESTICATION,1,yellow,Meld the lowest card in your hand. Draw a 1.,,,castle,castle,,,crown,hex,castle
+MASONRY,1,yellow,"You may meld any number of cards from your hand, each with a castle. If you melded four or more cards in this way, claim the Monument achievement.",,,castle,castle,,,hex,castle,castle
+METALWORKING,1,red,"Draw and reveal a 1. If it has a castle, score it and repeat this dogma effect. Otherwise, keep it.",,,castle,castle,,,castle,hex,castle
+MYSTICISM,1,purple,"Draw and reveal a 1. If it is the same color as any card on your board, meld it and draw a 1.",,,castle,hex,,,castle,castle,castle
+OARS,1,red,"I demand you transfer a card with a crown from your hand to my score pile! If you do, draw a 1, and repeat this dogma effect!","If no cards were transferred due to this demand, draw a 1.",,castle,castle,,,crown,hex,castle
+POTTERY,1,blue,"You may return up to three cards from your hand. If you returned any cards, draw and score a card of value equal to the number of cards you returned.",Draw a 1.,,leaf,hex,,,leaf,leaf,leaf
+SAILING,1,green,Draw and meld a 1.,,,crown,crown,,,crown,hex,leaf
+THE WHEEL,1,green,Draw two 1.,,,castle,hex,,,castle,castle,castle
+TOOLS,1,blue,"You may return three cards from your hand. If you do, draw and meld a 3.","You may return a 3 from your hand. If you do, draw three 1.",,bulb,hex,,,bulb,bulb,castle
+WRITING,1,blue,Draw a 2.,,,bulb,hex,,,bulb,bulb,crown
+CALENDAR,2,blue,"If you have more cards in your score pile than in your hand, draw two 3.",,,leaf,hex,,,leaf,leaf,bulb
+CANAL BUILDING,2,yellow,You may exchange all the highest cards in your hand with all the highest cards in your score pile.,,,crown,hex,,,crown,leaf,crown
+CONSTRUCTION,2,red,I demand you transfer two cards from your hand to my hand! Draw a 2!,"If you are the only player with five top cards, claim the Empire achievement.",,castle,castle,,,hex,castle,castle
+CURRENCY,2,green,"You may return any number of cards from your hand. If you do, draw and score a 2 for every different value of card you returned.",,,crown,leaf,,,crown,hex,crown
+FERMENTING,2,yellow,Draw a 2 for every color on your board with one or more leaf.,,,leaf,leaf,,,leaf,hex,castle
+MAPMAKING,2,green,"I demand you transfer a 1 from your score pile, if it has any, to my score pile!","If any card was transferred due to the demand, draw and score a 1.",,crown,hex,,,crown,crown,castle
+MATHEMATICS,2,blue,"You may return a card from your hand. If you do, draw and meld a card of value one higher than the card you returned.",,,bulb,hex,,,bulb,crown,bulb
+MONOTHEISM,2,purple,"I demand you transfer a top card on your board of different color from any card on my board to my score pile! If you do, draw and tuck a 1!",Draw and tuck a 1.,,castle,hex,,,castle,castle,castle
+PHILOSOPHY,2,purple,You may splay left any one color of your cards.,You may score a card from your hand.,,bulb,hex,,,bulb,bulb,bulb
+ROAD BUILDING,2,red,"Meld one or two cards from your hand. If you melded two, you may transfer your top red card to another player's board. If you do, transfer that player's top green card to your board.",,,castle,castle,,,castle,hex,castle
+ALCHEMY,3,blue,"Draw and reveal a 4 for every three castle on your board. If any of the drawn cards are red, return the cards drawn and all cards in your hand. Otherwise, keep them.","Meld a card from your hand, then score a card from your hand.",,castle,hex,,,leaf,castle,castle
+COMPASS,3,green,"I demand you transfer a top non-green card with a leaf from your board to my board, and then you transfer a top card without a leaf from my board to your board!",,,crown,hex,,,crown,crown,leaf
+EDUCATION,3,purple,"You may return the highest card from your score pile. If you do, draw a card of value two higher than the highest card remaining in your score pile.",,,bulb,bulb,,,bulb,bulb,hex
+ENGINEERING,3,red,I demand you transfer all top cards with a castle from your board to my score pile!,You may splay your red cards left.,,castle,castle,,,hex,bulb,castle
+FEUDALISM,3,purple,"I demand you transfer a card with a castle from your hand to my hand! If you do, unsplay that color of your cards!",You may splay your yellow or purple cards left.,,castle,hex,,,castle,leaf,castle
+MACHINERY,3,yellow,I demand you exchange all the cards in your hand with all the highest cards in my hand!,Score a card from your hand with a castle. You may splay your red cards left.,,leaf,leaf,,,leaf,hex,castle
+MEDICINE,3,yellow,I demand you exchange the highest card in your score pile with the lowest card in my score pile!,,,leaf,crown,,,leaf,leaf,hex
+OPTICS,3,red,"Draw and meld a 3. If it has a crown, draw and score a 4. Otherwise, transfer a card from your score pile to the score pile of an opponent with fewer points than you.",,,crown,crown,,,crown,crown,hex
+PAPER,3,green,You may splay your green or blue cards left.,Draw a 4 for every color you have splayed left.,,bulb,hex,,,bulb,bulb,crown
+TRANSLATION,3,blue,"You may meld all the cards in your score pile. If you meld one, you must meld them all.","If each top card on your board has a crown, claim the World achievement.",,crown,hex,,,crown,crown,crown
+ANATOMY,4,yellow,"I demand you return a card from your score pile! If you do, return a top card of equal value from your board!",,,leaf,leaf,,,leaf,leaf,hex
+COLONIALISM,4,red,"Draw and tuck a 3. If it has a crown, repeat this dogma effect.",,,factory,hex,,,factory,bulb,factory
+ENTERPRISE,4,purple,"I demand you transfer a top non-purple card with a crown from your board to my board! If you do, draw and meld a 4!",You may splay your green cards right.,,crown,hex,,,crown,crown,crown
+EXPERIMENTATION,4,blue,Draw and meld a 5.,,,bulb,hex,,,bulb,bulb,bulb
+GUNPOWDER,4,red,I demand you transfer a top card with a castle from your board to my score pile!,"If any card was transferred due to the demand, draw and score a 2.",,factory,hex,,,factory,crown,factory
+INVENTION,4,green,"You may splay right any one color of your cards currently splayed left. If you do, draw and score a 4.","If you have five colors splayed, each in any direction, claim the Wonder achievement.",,bulb,hex,,,bulb,bulb,factory
+NAVIGATION,4,green,"I demand you transfer a 2 or 3 from your score pile, if it has any, to my score pile!",,,crown,hex,,,crown,crown,crown
+PERSPECTIVE,4,yellow,"You may return a card from your hand. If you do, score a card from your hand for every two bulb on your board.",,,bulb,hex,,,bulb,bulb,leaf
+PRINTING PRESS,4,blue,"You may return a card from your score pile. If you do, draw a card of value two higher than the top purple card on your board.",You may splay your blue cards right.,,bulb,hex,,,bulb,bulb,crown
+REFORMATION,4,purple,You may tuck a card from your hand for every two leaf on your board.,You may splay your yellow or purple cards right.,,leaf,leaf,,,leaf,hex,leaf
+ASTRONOMY,5,purple,"Draw and reveal a 6. If the card is green or blue, meld it and repeat this dogma effect.","If all non-purple top cards on your board are value 6 or higher, claim the Universe achievement.",,bulb,crown,,,bulb,bulb,hex
+BANKING,5,green,"I demand you transfer a top non-green card with a factory from your board to my board. If you do, draw and score a 5!",You may splay your green cards right.,,crown,factory,,,crown,hex,crown
+CHEMISTRY,5,blue,You may splay your blue cards right.,Draw and score a card of value one higher than the highest top card on your board and then return a card from your score pile.,,factory,factory,,,bulb,factory,hex
+COAL,5,red,Draw and tuck a 5.,You may splay your red cards right.,"You may score any one of your top cards. If you do, also score the card beneath it.",factory,factory,,,factory,factory,hex
+MEASUREMENT,5,green,"You may reveal and return a card from your hand. If you do, splay that color of your cards right, and draw a card of value equal to the number of cards of that color on your board.",,,bulb,bulb,,,leaf,bulb,hex
+PHYSICS,5,blue,"Draw three 6 and reveal them. If two or more of the drawn cards are the same color, return the drawn cards and all cards in your hand. Otherwise, keep them.",,,bulb,factory,,,bulb,bulb,hex
+SOCIETIES,5,purple,"I demand you transfer a card with a bulb higher than my top card of the same color from your board to my board! If you do, draw a 5!",,,crown,crown,,,hex,bulb,crown
+STATISTICS,5,yellow,I demand you transfer all the highest cards in your score pile to your hand!,You may splay your yellow cards right.,,leaf,leaf,,,bulb,leaf,hex
+STEAM ENGINE,5,yellow,"Draw and tuck two 4, then score your bottom yellow card.",,,factory,hex,,,factory,crown,factory
+THE PIRATE CODE,5,red,I demand you transfer two cards of value 4 or less from your score pile to my score pile!,"If any card was transferred due to the demand, score the lowest top card with a crown from your board.",,crown,crown,,,factory,crown,hex
+ATOMIC THEORY,6,blue,You may splay your blue cards right.,Draw and meld a 7.,,bulb,bulb,,,bulb,bulb,hex
+CANNING,6,yellow,"You may draw and tuck a 6. If you do, score all your top cards without a factory.",You may splay your yellow cards right.,,factory,hex,,,factory,leaf,factory
+CLASSIFICATION,6,green,"Reveal the color of a card from your hand. Take into your hand all cards of that color from all opponents' hands. Then, meld all cards of that color from your hand.",,,bulb,bulb,,,bulb,bulb,hex
+DEMOCRACY,6,purple,"You may return any number of cards from your hand. If you have returned more cards than any other player due to Democracy so far during this dogma action, draw and score an 8.",,,bulb,crown,,,bulb,bulb,hex
+EMANCIPATION,6,purple,"I demand you transfer a card from your hand to my score pile! If you do, draw a 6!",You may splay your red or purple cards right.,,factory,factory,,,bulb,factory,hex
+ENCYCLOPEDIA,6,blue,"You may meld all the highest cards in your score pile. If you meld one of the highest, you must meld all of the highest.",,,crown,hex,,,crown,crown,crown
+INDUSTRIALIZATION,6,red,Draw and tuck a 6 for every color on your board with one or more factory.,You may splay your red or purple cards right.,,factory,crown,,,factory,factory,hex
+MACHINE TOOLS,6,red,Draw and score a card of value equal to the highest card in your score pile.,,,factory,factory,,,factory,hex,factory
+METRIC SYSTEM,6,green,"If your green cards are splayed right, you may splay any one color of your cards right.",You may splay your green cards right.,,crown,hex,,,factory,crown,crown
+VACCINATION,6,yellow,"I demand you return all the lowest cards in your score pile! If you returned any, draw and meld a 6!","If any card was returned as a result of the demand, draw and meld a 7.",,leaf,leaf,,,factory,leaf,hex
+BICYCLE,7,green,"You may exchange all the cards in your hand with all the cards in your score pile. If you exchange one, you must exchange them all.",,,crown,crown,,,crown,clock,hex
+COMBUSTION,7,red,I demand you transfer one card from your score pile to my score pile for every four crowns on my board!,Return your bottom red card.,,crown,crown,,,crown,factory,hex
+ELECTRICITY,7,green,"Return all your top cards without a factory, then draw an 8 for each card you returned.",,,factory,bulb,,,factory,hex,factory
+EVOLUTION,7,blue,"You may choose to either draw and score an 8 and then return a card from your score pile, or draw a card of value one higher than the highest card in your score pile.",,,bulb,bulb,,,bulb,bulb,hex
+EXPLOSIVES,7,red,"I demand you transfer the three highest cards from your hand to my hand! If you transferred any, and then have no cards in hand, draw a 7!",,,factory,hex,,,factory,factory,factory
+LIGHTING,7,purple,"You may tuck up to three cards from your hand. If you do, draw and score a 7 for every different value of card you tucked.",,,leaf,hex,,,leaf,clock,leaf
+PUBLICATIONS,7,blue,You may rearrange the order of one color of cards on your board.,You may splay your yellow or blue cards up.,,bulb,hex,,,bulb,clock,bulb
+RAILROAD,7,purple,"Return all cards from your hand, then draw three 6.",You may splay up any one color of your cards currently splayed right.,,clock,clock,,,factory,clock,hex
+REFRIGERATION,7,yellow,I demand you return half (rounded down) of the cards in your hand!,You may score a card from your hand.,,leaf,hex,,,leaf,leaf,crown
+SANITATION,7,yellow,I demand you exchange the two highest cards in your hand with the lowest card in my hand!,,,leaf,leaf,,,leaf,hex,leaf
+ANTIBIOTICS,8,yellow,"You may return up to three cards from your hand. For every different value of card that you returned, draw two 8.",,,leaf,leaf,,,leaf,leaf,hex
+CORPORATIONS,8,green,"I demand you transfer a top non-green card with a factory from your board to my score pile! If you do, draw and meld an 8!",Draw and meld an 8.,,factory,hex,,,factory,factory,crown
+EMPIRICISM,8,purple,"Choose two colors, then draw and reveal a 9. If it is either of the colors you chose, meld it and you may splay your cards of that color up.","If you have twenty or more bulb on your board, you win.",,bulb,bulb,,,bulb,bulb,hex
+FLIGHT,8,red,"If your red cards are splayed up, you may splay any one color of your cards up.",You may splay your red cards up.,,crown,crown,,,hex,clock,crown
+MASS MEDIA,8,green,"You may return a card from your hand. If you do, choose a value, and return all cards of that value from all score piles.",You may splay your purple cards up.,,bulb,bulb,,,hex,clock,bulb
+MOBILITY,8,red,"I demand you transfer the two highest non-red top cards without a factory from your board to my score pile! If you transferred any cards, draw an 8!",,,factory,hex,,,factory,clock,factory
+QUANTUM THEORY,8,blue,"You may return up to two cards from your hand. If you return two, draw a 10 and then draw and score a 10.",,,clock,clock,,,clock,clock,hex
+ROCKETRY,8,blue,Return a card in any other player's score pile for every two clock on your board.,,,clock,clock,,,clock,clock,hex
+SKYSCRAPERS,8,yellow,"I demand you transfer a top non-yellow card with a clock from your board to my board! If you do, score the card beneath it, and return all other cards from that pile!",,,crown,hex,,,factory,crown,crown
+SOCIALISM,8,purple,"You may tuck all cards from your hand. If you tuck one, you must tuck them all. If you tucked at least one purple card, take all the lowest cards in each other player's hand into your hand.",,,leaf,leaf,,,hex,leaf,leaf
+COLLABORATION,9,green,"I demand you draw two 9 and reveal them! Transfer the card of my choice to my board, and meld the other!","If you have ten or more green cards on your board, you win.",,crown,hex,,,crown,clock,crown
+COMPOSITES,9,red,"I demand you transfer all but one card from your hand to my hand! Also, transfer the highest card from your score pile to my score pile!",,,factory,factory,,,factory,hex,factory
+COMPUTERS,9,blue,You may splay your red cards or your green cards up.,"Draw and meld a 10, then execute each of its non-demand effects. Do not share them.",,clock,clock,,,hex,clock,factory
+ECOLOGY,9,yellow,"You may return a card from your hand. If you do, score a card from your hand and draw two 10.",,,bulb,leaf,,,bulb,bulb,hex
+FISSION,9,red,"I demand you draw a 10! If it is red, remove all hands, boards, and score piles from the game! If this occurs, the dogma action is complete.",Return a top card other than Fission from any player's board. Draw a 10.,,clock,hex,,,clock,clock,clock
+GENETICS,9,blue,Draw and meld a 10. Score all cards beneath it.,,,bulb,bulb,,,bulb,bulb,hex
+SATELLITES,9,green,"Return all cards from your hand, and draw three 8.",You may splay your purple cards up.,Meld a card from your hand and then execute each of its non-demand dogma effects. Do not share them.,clock,hex,,,clock,clock,clock
+SERVICES,9,purple,"I demand you transfer all the highest cards from your score pile to my hand! If you transferred any cards, then transfer a top card from my board without a leaf to your hand!",,,leaf,hex,,,leaf,leaf,leaf
+SPECIALIZATION,9,purple,Reveal a card from your hand. Take into your hand the top card of that color from all other players' boards.,You may splay your yellow or blue cards up.,,factory,hex,,,factory,leaf,factory
+SUBURBIA,9,yellow,You may tuck any number of cards from your hand. Draw and score a 1 for each card you tucked.,,,leaf,hex,,,crown,leaf,leaf
+A.I.,10,purple,Draw and score a 10.,"If Robotics and Software are top cards on any board, the single player with the lowest score wins.",,bulb,bulb,,,bulb,clock,hex
+BIOENGINEERING,10,blue,Transfer a top card with a leaf from any other player's board to your score pile.,"If any player has fewer than three leaf on their board, the single player with the most leaf on their board wins.",,clock,bulb,,,clock,clock,hex
+DATABASES,10,green,I demand you return half (rounded up) of the cards in your score pile!,,,clock,hex,,,clock,clock,clock
+GLOBALIZATION,10,yellow,I demand you return a top card with a leaf on your board!,"Draw and score a 6. If no player has more leaf than factory on their board, the single player with the most points wins.",,factory,hex,,,factory,factory,factory
+MINIATURIZATION,10,red,"You may return a card from your hand. If you returned a 10, draw a 10 for every different value of card in your score pile.",,,bulb,hex,,,bulb,clock,bulb
+ROBOTICS,10,red,"Score your top green card. Draw and meld a 10, then execute each of its non-demand dogma effects. Do not share them.",,,factory,hex,,,factory,clock,factory
+SELF SERVICE,10,green,Execute each of the non-demand dogma effects of any other top card on your board. Do not share them.,"If you have more achievements than each other player, you win.",,crown,hex,,,crown,crown,crown
+SOFTWARE,10,blue,Draw and score a 10.,"Draw and meld two 10, then execute each of the second card's non-demand dogma effects. Do not share them.",,clock,clock,,,clock,clock,hex
+STEM CELLS,10,yellow,"You may score all cards from your hand. If you score one, you must score them all.",,,leaf,hex,,,leaf,leaf,leaf
+THE INTERNET,10,purple,You may splay your green cards up.,Draw and score a 10.,Draw and meld a 10 for every two clock on your board.,clock,hex,,,clock,clock,bulb

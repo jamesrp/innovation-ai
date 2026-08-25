@@ -9,11 +9,14 @@ reliable play between basic agents and later for self-play and PyTorch research.
 turn, and nested card-effect choice will be exposed as a serializable first-class decision, with
 strict separation between authoritative state and player-visible observations.
 
-The engine milestone is currently in planning; no game rules have been implemented yet.
+The engine foundation is underway. WP1 now provides validated immutable card metadata, stable
+semantic IDs, packaged authoritative data, and a deterministic fingerprint; authoritative game
+state and transitions are the next implementation packages.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`
 - Implementation sequence: `docs/MILESTONE_1_PLAN.md`
+- Rules interpretations: `docs/RULES_DECISIONS.md`
 - Agent conventions: `AGENTS.md`
 
 ## Development environment
