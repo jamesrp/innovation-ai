@@ -243,7 +243,7 @@ class TurnCounters:
 
 @dataclass(frozen=True, slots=True)
 class EffectVariable:
-    """One serializable variable scoped to pending effect resolution."""
+    """One recursively serializable value in a namespaced effect scope."""
 
     name: str
     value: StateValue
@@ -255,7 +255,7 @@ class EffectVariable:
 
 @dataclass(frozen=True, slots=True)
 class EffectFrameState:
-    """Serializable placeholder frame owned by later effect work packages."""
+    """One generic frame in the explicit, serializable effect VM stack."""
 
     kind: str
     step: int = 0
@@ -352,6 +352,13 @@ class GameState:
                     raise ValueError("a starting meld choice must be in that player's hand")
         if min(self.next_decision_id, self.next_event_id, self.next_dogma_action_id) < 1:
             raise ValueError("monotonic IDs must start at one")
+        variable_names = tuple(variable.name for variable in self.effect_variables)
+        if len(set(variable_names)) != len(variable_names):
+            raise ValueError("effect variable names must be unique")
+        for frame in self.pending_effects:
+            frame_names = tuple(variable.name for variable in frame.variables)
+            if len(set(frame_names)) != len(frame_names):
+                raise ValueError("effect frame variable names must be unique")
         if self.phase is GamePhase.TERMINAL and self.terminal_result is None:
             raise ValueError("terminal phase requires a terminal result")
         if self.phase is not GamePhase.TERMINAL and self.terminal_result is not None:
