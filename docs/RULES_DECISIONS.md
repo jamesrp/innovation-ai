@@ -6,9 +6,8 @@ engine tests in the work package that first makes it executable.
 
 ## Status
 
-- **Accepted decisions:** 1–16 and 18.
-- **Awaiting owner confirmation:** 17 (quantity snapshot timing).
-- Decisions 2, 3, 8, 10, and 13 were confirmed by the project owner on August 25, 2026.
+- **Accepted decisions:** 1–18.
+- Decisions 2, 3, 8, 10, 13, and 17 were confirmed by the project owner on August 25, 2026.
 - Decisions 15, 16, and 18 record the corresponding effect/protocol contracts confirmed in the same review.
 
 ## Decisions
@@ -161,7 +160,7 @@ stable card-ID order without presenting a meaningless order decision.
 **Tests:** canonical subset selection; same-age return order; same-color meld/tuck order; demand
 victim remains the order chooser.
 
-### 17. Quantity snapshot timing — proposed; awaiting owner confirmation
+### 17. Quantity snapshot timing — accepted
 
 A quantity in one printed instruction is evaluated once when that instruction begins. Operations
 performed by the instruction do not increase or decrease its remaining count. An explicit repeat
