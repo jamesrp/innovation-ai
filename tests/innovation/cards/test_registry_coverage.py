@@ -36,17 +36,8 @@ from innovation_ai.innovation.types import CardId, DogmaEffectId
 
 REGISTRY = load_card_registry()
 
-# The current wave manifest. When a wave lands, this grows; at the end of WP7 it is all 105.
-WAVE_MANIFEST = frozenset(
-    {
-        CardId("the-wheel"),
-        CardId("code-of-laws"),
-        CardId("archery"),
-        CardId("pottery"),
-        CardId("metalworking"),
-        CardId("fission"),
-    }
-)
+# Milestone 1 final manifest: every catalog card must have one discovered implementation.
+WAVE_MANIFEST = frozenset(card.id for card in REGISTRY.cards)
 TOTAL_CARDS = 105
 
 
@@ -117,10 +108,12 @@ def test_the_effects_fingerprint_includes_named_helper_behavior() -> None:
     assert first.fingerprint() != second.fingerprint()
 
 
-def test_an_unimplemented_card_raises_a_typed_error_and_never_no_ops() -> None:
-    programs = load_effect_programs()
+def test_a_partial_registry_raises_a_typed_error_and_never_no_ops() -> None:
+    complete = load_effect_programs()
+    wheel = complete.program_for_card(CardId("the-wheel"))
+    partial = EffectProgramRegistry((wheel,))
     with pytest.raises(UnimplementedCardError) as error:
-        programs.program_for_card(CardId("tools"))
+        partial.program_for_card(CardId("tools"))
     assert error.value.card_id == CardId("tools")
 
 

@@ -22,6 +22,7 @@ def test_seeded_protocol_fuzz_is_deterministic_fast_and_reaches_terminal() -> No
     assert first.terminal.reason in {
         TerminalReason.ACHIEVEMENT_VICTORY,
         TerminalReason.DRAW_BEYOND_AGE_10,
+        TerminalReason.CARD_EFFECT,
     }
     assert len(first.steps) < 512
 
@@ -38,9 +39,9 @@ def test_small_seed_batch_has_stable_golden_trace_records() -> None:
 
     assert tuple(result.seed for result in results) == (0, 1, 2)
     assert tuple(result.trace_digest for result in results) == (
-        "sha256:3d28f60109a40826ca4955fa58cc3a077979da975a77121542ab017fa2483d13",
-        "sha256:5f8eafd9b5701091fed6454403730cb0a8a990c3b2314c63eff959e4f7324632",
-        "sha256:be53cca983b8cb4a852c6dacdbbbc20ac2ff2ebe4cadbb51fbc25874f9813f48",
+        "sha256:e271f2eaa8c021bee3e7f176e6b5bbf870fc5d72a8388d07d4a789503ea27495",
+        "sha256:07b8857c17629f359e13b059862b67989df391dadb65c61e9cd50ba9d5a600f4",
+        "sha256:b2f22a691795477c5fc2b00e51cd16bfe9df32452ec2ffc619da41e8a87a80c9",
     )
 
 

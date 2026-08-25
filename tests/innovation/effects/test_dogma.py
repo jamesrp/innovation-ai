@@ -374,9 +374,10 @@ def test_a_root_dogma_rejects_orphaned_runtime_variables() -> None:
         start_dogma(dirty, CardId("the-wheel"), P1, PROGRAMS, REGISTRY)
 
 
-def test_activating_an_unimplemented_card_fails_loudly() -> None:
-    from innovation_ai.innovation.effects import UnimplementedCardError
+def test_a_partial_registry_rejects_an_unimplemented_card() -> None:
+    from innovation_ai.innovation.effects import EffectProgramRegistry, UnimplementedCardError
 
+    programs = EffectProgramRegistry((PROGRAMS.program_for_card(CardId("the-wheel")),))
     state = scenario(REGISTRY).board(P1, Color.BLUE, ("tools",)).build()
     with pytest.raises(UnimplementedCardError):
-        start_dogma(state, CardId("tools"), P1, PROGRAMS, REGISTRY)
+        start_dogma(state, CardId("tools"), P1, programs, REGISTRY)

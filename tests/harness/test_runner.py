@@ -256,8 +256,10 @@ def test_the_real_engine_adapter_plays_a_complete_game_including_dogma() -> None
                 ),
                 None,
             )
-            chosen = dogma or request.decision.legal_actions[0]
-            took_dogma = took_dogma or dogma is not None
+            chosen = (
+                dogma if dogma is not None and not took_dogma else request.decision.legal_actions[0]
+            )
+            took_dogma = took_dogma or (dogma is not None and chosen is dogma)
             runner.submit(Submission(request.game_id, chosen))
         result = runner.result(game_id)
         assert result is not None, f"seed {seed} must terminate within the step ceiling"
