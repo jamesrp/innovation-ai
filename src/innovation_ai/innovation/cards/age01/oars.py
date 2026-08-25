@@ -1,19 +1,14 @@
-"""OARS - effect 1: "I demand you transfer a card with a crown from your hand to my score
-pile! If you do, draw a 1, and repeat this dogma effect!" effect 2: "If no cards were transferred
-due to this demand, draw a 1."
+"""OARS - repeat the crown transfer demand; draw when no transfer occurred.
 
-The demand repeats until one execution cannot transfer a crown card.  The second printed effect
-uses a named pure predicate because the frozen declarative vocabulary has no cross-effect demand
-history expression: under Oars' legal schedule, a vulnerable demand has qualifying changes iff it
-transferred at least one card, while an immune demand was skipped and therefore transferred none.
+The demand's movement result is accumulated in the causal scope for this exact card execution.
+That scope survives direct printed-effect scheduling but is isolated for every nested execution,
+where the skipped demand therefore has no transfer result.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Final, cast
+from typing import Final
 
-from innovation_ai.innovation.effects.model import EffectContext, frozen_icon_counts
 from innovation_ai.innovation.effects.program import (
     ACTIVATOR,
     EXECUTOR,
@@ -24,44 +19,20 @@ from innovation_ai.innovation.effects.program import (
     DrawNode,
     EffectProgram,
     MovementKind,
+    MovementResultMode,
     MoveNode,
-    NamedPredicate,
     Predicate,
     ProgramEffect,
     RepeatNode,
     SequenceNode,
     ValueRef,
+    VariableScope,
     ZoneKind,
 )
 from innovation_ai.innovation.types import CardId, DogmaEffectId, Icon
 
 CARD_ID: Final[CardId] = CardId("oars")
 
-
-def _no_cards_transferred_due_to_demand(
-    state: Any,
-    _context: EffectContext,
-    _registry: Any,
-) -> bool:
-    """Read Oars' frozen schedule and root change count without mutating either."""
-
-    frozen = frozen_icon_counts(state)
-    if frozen is None or frozen[2] >= frozen[1]:
-        # With no dogma frame, or when the opponent was immune, the demand did not transfer.
-        return True
-    for variable in state.effect_variables:
-        if getattr(variable, "name", None) != "dogma:qualifying-change-count":
-            continue
-        value = getattr(variable, "value", None)
-        if not isinstance(value, int) or isinstance(value, bool):
-            return False
-        return value == 0
-    return True
-
-
-PREDICATES: Final[Mapping[str, NamedPredicate]] = {
-    "no-cards-transferred-due-to-demand": cast(NamedPredicate, _no_cards_transferred_due_to_demand),
-}
 
 EFFECTS: Final[EffectProgram] = EffectProgram(
     "oars-v1",
@@ -74,7 +45,7 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         RepeatNode(
             "oars-repeat",
             "oars-body",
-            Predicate.truthy("transferred"),
+            Predicate.truthy("crown-card"),
             maximum_iterations=105,
         ),
         SequenceNode("oars-body", ("choose-crown", "transfer-crown", "if-transferred")),
@@ -92,13 +63,24 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             CardSelector.from_variable("crown-card"),
             destination_player=ACTIVATOR,
             destination_zone=ZoneKind.SCORE,
-            result_variable="transferred",
+            result_variable="oars-demand-transferred",
+            result_scope=VariableScope.CARD_EXECUTION,
+            result_mode=MovementResultMode.ANY,
         ),
-        ConditionNode("if-transferred", Predicate.truthy("transferred"), "draw-one"),
+        ConditionNode(
+            "if-transferred",
+            Predicate.truthy("crown-card"),
+            "draw-one",
+        ),
         DrawNode("draw-one", ValueRef.literal(1), "drawn", player=EXECUTOR),
         ConditionNode(
             "oars-fallback",
-            Predicate.named("no-cards-transferred-due-to-demand"),
+            Predicate.negate(
+                Predicate.truthy(
+                    "oars-demand-transferred",
+                    scope=VariableScope.CARD_EXECUTION,
+                )
+            ),
             "fallback-draw",
         ),
         DrawNode("fallback-draw", ValueRef.literal(1), "fallback", player=EXECUTOR),

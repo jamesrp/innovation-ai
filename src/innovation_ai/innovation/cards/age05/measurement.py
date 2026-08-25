@@ -13,6 +13,7 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
+    BatchNode,
     CardSelector,
     ChoiceKind,
     ChoiceNode,
@@ -50,9 +51,10 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ConditionNode("if-chosen", Predicate.truthy("chosen-card"), "return-splay-draw"),
         SequenceNode(
             "return-splay-draw",
-            ("bind-color", "reveal-card", "return-card", "splay-color", "bind-count", "draw"),
+            ("bind-color", "reveal-and-return", "splay-color", "bind-count", "draw"),
         ),
         LetNode("bind-color", "chosen-color", color_of="chosen-card"),
+        BatchNode("reveal-and-return", ("reveal-card", "return-card")),
         RevealNode("reveal-card", CardSelector.from_variable("chosen-card")),
         MoveNode("return-card", MovementKind.RETURN, CardSelector.from_variable("chosen-card")),
         SplayNode(

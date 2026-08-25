@@ -39,9 +39,9 @@ def test_small_seed_batch_has_stable_golden_trace_records() -> None:
 
     assert tuple(result.seed for result in results) == (0, 1, 2)
     assert tuple(result.trace_digest for result in results) == (
-        "sha256:901a96417e24d4d683b0b50fa5bd7af8aa70f53f021f54301506e789b1d6ef86",
-        "sha256:41a4109803ca8516c0ff6e2dfd84de4129b75b579964f3c031fe5a3b6be38362",
-        "sha256:42bccba864757af95ad493cfdc0c97065334e84519f723c771cdb97106f39038",
+        "sha256:a2465b2695b9e044df9efaedf11a35b198e3e42c42fad07cfd2531ba4e897b1c",
+        "sha256:398f31f7f777f08475131577306b14949e7c358d3b64139f86eed8cb6a4b9554",
+        "sha256:3ea9be2fe63dcee2a689776896286421fa7cf7837d0899571e5ef070e3eeb500",
     )
 
 

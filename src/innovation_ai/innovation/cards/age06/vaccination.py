@@ -1,15 +1,13 @@
-"""VACCINATION - demand return every lowest score card and, if any returned, draw
-and meld a 6; afterward the activator draws and melds a 7 iff the demand returned a card.
+"""VACCINATION - return all lowest score cards, then resolve its two causal rewards.
 
-The lowest set is snapshotted and returned completely, with the victim choosing only same-age
-supply order.  The second ordinal reads root dogma change history: the demand has no possible
-change unless a lowest card was returned, and its conditional draw/meld can occur only after such
-a return.
+The direct demand stores whether its grouped return moved anything in this exact card execution's
+causal scope. Nested execution skips the demand and therefore cannot inherit unrelated outer
+history.
 """
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
@@ -24,34 +22,17 @@ from innovation_ai.innovation.effects.program import (
     LetNode,
     MovementKind,
     MoveNode,
-    NamedPredicate,
     OrderGroup,
     Predicate,
     ProgramEffect,
     SequenceNode,
     ValueRef,
+    VariableScope,
 )
 from innovation_ai.innovation.types import CardId, DogmaEffectId
 
 CARD_ID: Final[CardId] = CardId("vaccination")
 
-
-def _demand_returned_a_card(state: Any, context: Any, registry: Any) -> bool:
-    """Return whether Vaccination's demand caused any qualifying gameplay change."""
-
-    del context, registry
-    return any(
-        variable.name == "dogma:qualifying-change-count"
-        and isinstance(variable.value, int)
-        and not isinstance(variable.value, bool)
-        and variable.value > 0
-        for variable in state.effect_variables
-    )
-
-
-PREDICATES: Final[dict[str, NamedPredicate]] = {
-    "demand-returned-a-card": _demand_returned_a_card,
-}
 
 EFFECTS: Final[EffectProgram] = EffectProgram(
     "vaccination-v1",
@@ -87,6 +68,8 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             "return-lowest",
             MovementKind.RETURN,
             CardSelector.from_variable("lowest-cards"),
+            result_variable="vaccination-demand-returned",
+            result_scope=VariableScope.CARD_EXECUTION,
             moved_variable="returned-lowest",
             order_variable="return-order",
         ),
@@ -105,7 +88,10 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ),
         ConditionNode(
             "vaccination-follow-up",
-            Predicate.named("demand-returned-a-card"),
+            Predicate.truthy(
+                "vaccination-demand-returned",
+                scope=VariableScope.CARD_EXECUTION,
+            ),
             "draw-and-meld-seven",
         ),
         BatchNode("draw-and-meld-seven", ("draw-seven", "meld-seven")),

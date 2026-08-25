@@ -9,6 +9,7 @@ from innovation_ai.innovation.effects import EffectStatus, load_effect_programs
 from innovation_ai.innovation.types import CardId, Color, PlayerId, SplayDirection
 
 P1 = PlayerId.PLAYER_1
+P2 = PlayerId.PLAYER_2
 REGISTRY = load_card_registry()
 PROGRAMS = load_effect_programs()
 
@@ -37,3 +38,34 @@ def test_splay_choice_excludes_absent_green_and_drawn_a_i_executes_nested() -> N
     assert CardId("databases") in result.state.player(P1).score_pile
     nested = tuple(event for event in result.events if event.source_card_id == CardId("a-i"))
     assert nested and all(event.nested for event in nested)
+    draw_meld = tuple(
+        event
+        for event in result.events
+        if event.source_card_id == CardId("computers") and CardId("a-i") in event.card_ids
+    )
+    assert len(draw_meld) == 2
+    assert len({event.atomic_group_id for event in draw_meld}) == 1
+
+
+def test_a_nested_a_i_win_immediately_unwinds_the_complete_production_chain() -> None:
+    state = (
+        scenario(REGISTRY)
+        .board(P1, Color.BLUE, ("computers",))
+        .board(P1, Color.RED, ("robotics",))
+        .board(P2, Color.BLUE, ("software",))
+        .supply(10, ("a-i", "databases"))
+        .build()
+    )
+    result = resolve_dogma(
+        state,
+        "computers",
+        choose_color(Color.RED),
+        registry=REGISTRY,
+        programs=PROGRAMS,
+    )
+
+    assert result.status is EffectStatus.TERMINAL
+    assert result.terminal is not None and result.terminal.winners == (P1,)
+    assert result.state.pending_effects == ()
+    assert result.state.effect_variables == ()
+    assert result.state.revealed == ()

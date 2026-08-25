@@ -14,6 +14,7 @@ from innovation_ai.innovation.effects import EffectContext, NamedPredicate, get_
 from innovation_ai.innovation.effects.program import (
     ALL_PLAYERS,
     EXECUTOR,
+    BatchNode,
     CardSelector,
     CardSelectorKind,
     Cmp,
@@ -25,7 +26,6 @@ from innovation_ai.innovation.effects.program import (
     MoveNode,
     Predicate,
     ProgramEffect,
-    SequenceNode,
     ValueRef,
     WinMetric,
     WinMode,
@@ -57,7 +57,7 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ProgramEffect(DogmaEffectId(CARD_ID, 2), False, "a-i-win"),
     ),
     (
-        SequenceNode("a-i-score", ("draw-ten", "score-ten")),
+        BatchNode("a-i-score", ("draw-ten", "score-ten")),
         DrawNode("draw-ten", ValueRef.literal(10), "drawn-ten", player=EXECUTOR),
         MoveNode(
             "score-ten",

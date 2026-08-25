@@ -5,7 +5,11 @@ from __future__ import annotations
 from support import ScenarioBuilder, assert_conserved, resolve_dogma, scenario
 
 from innovation_ai.innovation.catalog import load_card_registry
-from innovation_ai.innovation.effects import EffectStatus, load_effect_programs
+from innovation_ai.innovation.effects import (
+    EffectEventKind,
+    EffectStatus,
+    load_effect_programs,
+)
 from innovation_ai.innovation.types import CardId, Color, PlayerId, SpecialAchievementId
 
 P1 = PlayerId.PLAYER_1
@@ -31,6 +35,18 @@ def test_green_and_blue_draws_are_melded_before_the_effect_repeats() -> None:
     assert result.state.player(P1).hand == (CardId("democracy"),)
     assert result.state.revealed == ()
     assert SpecialAchievementId.UNIVERSE in result.state.player(P1).special_achievements
+    for card_id in (CardId("classification"), CardId("atomic-theory"), CardId("democracy")):
+        draw_reveal = tuple(
+            event
+            for event in result.events
+            if card_id in event.card_ids
+            and (
+                event.kind is EffectEventKind.REVEAL
+                or (event.change is not None and event.change.kind.value == "draw")
+            )
+        )
+        assert len(draw_reveal) == 2
+        assert len({event.atomic_group_id for event in draw_reveal}) == 1
     assert_conserved(result.state, REGISTRY)
 
 

@@ -11,6 +11,7 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
+    BatchNode,
     CardSelector,
     ChoiceKind,
     ChoiceNode,
@@ -62,7 +63,7 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             order_variable="tuck-order",
         ),
         TimesNode("score-rewards", ValueRef.from_variable("tuck-count"), "draw-and-score"),
-        SequenceNode("draw-and-score", ("draw-one", "score-one")),
+        BatchNode("draw-and-score", ("draw-one", "score-one")),
         DrawNode("draw-one", ValueRef.literal(1), "reward-card", player=EXECUTOR),
         MoveNode(
             "score-one",

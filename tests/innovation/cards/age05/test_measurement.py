@@ -88,6 +88,9 @@ def test_the_reveal_is_recorded_and_cleared_after_the_return() -> None:
         for card_id in event.card_ids
     )
     assert revealed == (CardId("sailing"),)
+    reveal_return = tuple(event for event in result.events if CardId("sailing") in event.card_ids)
+    assert len(reveal_return) == 2
+    assert len({event.atomic_group_id for event in reveal_return}) == 1
     assert result.state.revealed == ()
 
 

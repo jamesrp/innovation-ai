@@ -20,6 +20,9 @@ from innovation_ai.innovation.types import (
     SplayDirection,
 )
 
+PUBLIC_REVEALED_COLOR_PREFIX = "public-revealed-color-"
+"""Effect-variable name prefix used for transient public colour attributes."""
+
 RULES_VERSION = "innovation-base-third-edition-2p-v1"
 INFORMATION_POLICY_VERSION = "rulebook-private-covered-v1"
 STATE_SCHEMA_VERSION = 2

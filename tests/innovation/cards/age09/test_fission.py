@@ -14,7 +14,13 @@ from innovation_ai.innovation.effects import (
 )
 from innovation_ai.innovation.serialization import dumps_state, loads_state
 from innovation_ai.innovation.state import state_hash
-from innovation_ai.innovation.types import CardId, Color, PlayerId
+from innovation_ai.innovation.types import (
+    CardId,
+    Color,
+    NormalAchievementId,
+    PlayerId,
+    SpecialAchievementId,
+)
 
 P1 = PlayerId.PLAYER_1
 P2 = PlayerId.PLAYER_2
@@ -42,6 +48,34 @@ def test_a_red_ten_removes_every_card_in_play_and_aborts() -> None:
         assert not player.score_pile
         assert all(not stack.cards for stack in player.board.stacks)
     assert_conserved(result.state, REGISTRY)
+
+
+def test_a_red_ten_preserves_actual_claimed_achievements() -> None:
+    state = (
+        _vulnerable()
+        .achievements(
+            P1,
+            normal=(NormalAchievementId.AGE_1,),
+            special=(SpecialAchievementId.WORLD,),
+        )
+        .achievements(
+            P2,
+            normal=(NormalAchievementId.AGE_2,),
+            special=(SpecialAchievementId.EMPIRE,),
+        )
+        .supply(10, (RED_TEN,))
+        .build()
+    )
+    before = tuple(
+        (player.normal_achievements, player.special_achievements) for player in state.players
+    )
+    result = resolve_dogma(state, "fission", registry=REGISTRY, programs=PROGRAMS)
+    after = tuple(
+        (player.normal_achievements, player.special_achievements) for player in result.state.players
+    )
+
+    assert result.status is EffectStatus.ABORT_DOGMA
+    assert after == before
 
 
 def test_the_mass_removal_is_one_atomic_operation() -> None:

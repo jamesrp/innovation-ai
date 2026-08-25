@@ -26,6 +26,8 @@ from innovation_ai.innovation.types import (
 # importing the mutation layer.
 from innovation_ai.innovation.zones import ZoneKind as ZoneKind
 
+from .model import VariableScope as VariableScope
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from innovation_ai.innovation.catalog import CardRegistry
     from innovation_ai.innovation.state import GameState
@@ -480,13 +482,6 @@ class ValueRef:
         return cls(ValueRefKind.NAMED, name=name)
 
 
-class VariableScope(StrEnum):
-    """Scope used for values that must survive one printed-effect boundary."""
-
-    LOCAL = "local"
-    ROOT = "root"
-
-
 class PredicateKind(StrEnum):
     """Supported conditions for branches, repeats, and guards."""
 
@@ -646,12 +641,14 @@ class ChoiceColorSource(StrEnum):
     """Where a colour choice's legal options come from.
 
     Rules decision 15 makes "you may splay X" offer every colour the chooser currently has on
-    their board, even when the resulting splay is a no-op. ``PRESENT_ON_BOARD`` expresses that
-    without each card restating the colour list.
+    their board, even when the resulting splay is a no-op. ``PRESENT_IN_HAND`` supports semantic
+    colour choices such as Classification without enumerating or disclosing exact private card
+    identities.
     """
 
     EXPLICIT = "explicit"
     PRESENT_ON_BOARD = "present-on-board"
+    PRESENT_IN_HAND = "present-in-hand"
 
 
 class ChoiceKind(StrEnum):
@@ -809,6 +806,14 @@ class RevealNode:
 
 
 @dataclass(frozen=True, slots=True)
+class RevealColorNode:
+    """Make one scoped colour variable transiently public without revealing a card identity."""
+
+    node_id: str
+    color_variable: str
+
+
+@dataclass(frozen=True, slots=True)
 class KeepNode:
     """Emit explicit keep provenance without moving the drawn card again."""
 
@@ -827,6 +832,13 @@ class MovementKind(StrEnum):
     REMOVE = "remove"
 
 
+class MovementResultMode(StrEnum):
+    """How repeated movement results update a persisted causal flag."""
+
+    REPLACE = "replace"
+    ANY = "any"
+
+
 @dataclass(frozen=True, slots=True)
 class MoveNode:
     """Move selected cards through shared zone primitives.
@@ -843,6 +855,7 @@ class MoveNode:
     destination_zone: ZoneKind | None = None
     result_variable: str | None = None
     result_scope: VariableScope = VariableScope.LOCAL
+    result_mode: MovementResultMode = MovementResultMode.REPLACE
     moved_variable: str | None = None
     order_variable: str | None = None
 
@@ -866,6 +879,31 @@ class MoveNode:
             raise ValueError("only transfer carries an explicit destination zone")
         if self.result_variable is None and self.result_scope is not VariableScope.LOCAL:
             raise ValueError("a movement result scope requires a result variable")
+        if self.result_variable is None and self.result_mode is not MovementResultMode.REPLACE:
+            raise ValueError("a movement result mode requires a result variable")
+
+
+@dataclass(frozen=True, slots=True)
+class DrawAndMoveNode:
+    """Repeat draw-and-X pairs inside one outer atomic instruction.
+
+    The quantity is snapshotted once. Each successful draw is immediately moved before the next
+    draw, preserving draw-beyond-10 interruption semantics, while every per-card event shares one
+    atomic group and automatic achievements are checked only after the complete instruction.
+    """
+
+    node_id: str
+    requested_age: ValueRef
+    count: ValueRef
+    movement: MovementKind
+    player: PlayerRef = EXECUTOR
+    maximum_iterations: int = 105
+
+    def __post_init__(self) -> None:
+        if self.movement not in {MovementKind.MELD, MovementKind.TUCK, MovementKind.SCORE}:
+            raise ValueError("draw-and-move supports only meld, tuck, or score")
+        if self.maximum_iterations < 1:
+            raise ValueError("draw-and-move limit must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -966,6 +1004,7 @@ class LetNode:
     value: ValueRef | None = None
     cards: CardSelector | None = None
     color_of: str | None = None
+    result_scope: VariableScope = VariableScope.LOCAL
 
     def __post_init__(self) -> None:
         sources = sum(source is not None for source in (self.value, self.cards, self.color_of))
@@ -1087,8 +1126,10 @@ type EffectNode = (
     | BatchNode
     | DrawNode
     | RevealNode
+    | RevealColorNode
     | KeepNode
     | MoveNode
+    | DrawAndMoveNode
     | CollectNode
     | ExchangeNode
     | RearrangeNode
@@ -1145,8 +1186,11 @@ class EffectProgram:
         atomic_types = (
             DrawNode,
             RevealNode,
+            RevealColorNode,
             KeepNode,
             MoveNode,
+            DrawAndMoveNode,
+            LetNode,
             ExchangeNode,
             RearrangeNode,
             SplayNode,

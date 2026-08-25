@@ -10,6 +10,7 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
+    BatchNode,
     CardSelector,
     DrawNode,
     EffectProgram,
@@ -31,7 +32,11 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
     (
         SequenceNode(
             "genetics-effect",
-            ("draw-ten", "bind-color", "snapshot-stack", "meld-ten", "score-beneath"),
+            ("draw-and-meld-ten", "score-beneath"),
+        ),
+        BatchNode(
+            "draw-and-meld-ten",
+            ("draw-ten", "bind-color", "snapshot-stack", "meld-ten"),
         ),
         DrawNode("draw-ten", ValueRef.literal(10), "drawn-ten", player=EXECUTOR),
         LetNode("bind-color", "drawn-color", color_of="drawn-ten"),

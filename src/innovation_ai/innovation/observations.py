@@ -7,7 +7,11 @@ from enum import StrEnum
 
 from innovation_ai.innovation.board import covered_visible_slots
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
-from innovation_ai.innovation.state import GamePhase, GameState
+from innovation_ai.innovation.state import (
+    PUBLIC_REVEALED_COLOR_PREFIX,
+    GamePhase,
+    GameState,
+)
 from innovation_ai.innovation.types import (
     CardId,
     Color,
@@ -18,7 +22,7 @@ from innovation_ai.innovation.types import (
     SplayDirection,
 )
 
-OBSERVATION_SCHEMA_VERSION = 2
+OBSERVATION_SCHEMA_VERSION = 3
 
 
 class InformationPolicy(StrEnum):
@@ -105,6 +109,7 @@ class GameObservation:
     information_policy: InformationPolicy
     rules_version: str
     revealed_cards: tuple[CardId, ...] = ()
+    revealed_colors: tuple[Color, ...] = ()
     schema_version: int = OBSERVATION_SCHEMA_VERSION
 
     def player(self, player_id: PlayerId) -> PlayerObservation:
@@ -185,6 +190,15 @@ def observe(
     registry = registry or load_card_registry()
     selected_policy = policy or InformationPolicy(state.information_policy_version)
     revealed = state.revealed_card_ids
+    revealed_colors = tuple(
+        color
+        for color in Color
+        if any(
+            variable.name.rsplit(":", maxsplit=1)[-1].startswith(PUBLIC_REVEALED_COLOR_PREFIX)
+            and variable.value == color.value
+            for variable in state.effect_variables
+        )
+    )
     players = tuple(
         PlayerObservation(
             player.player_id,
@@ -234,4 +248,5 @@ def observe(
         information_policy=selected_policy,
         rules_version=state.rules_version,
         revealed_cards=tuple(sorted(revealed, key=str)),
+        revealed_colors=revealed_colors,
     )

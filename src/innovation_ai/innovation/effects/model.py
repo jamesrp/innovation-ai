@@ -16,6 +16,7 @@ from innovation_ai.innovation.state import (
 )
 from innovation_ai.innovation.types import (
     CardId,
+    Color,
     DogmaEffectId,
     Icon,
     NormalAchievementId,
@@ -25,7 +26,7 @@ from innovation_ai.innovation.types import (
 from innovation_ai.innovation.zones import ChangeRecord
 
 EFFECT_RUNTIME_SCHEMA_VERSION = 2
-EFFECT_EVENT_SCHEMA_VERSION = 2
+EFFECT_EVENT_SCHEMA_VERSION = 3
 _SCOPE_PART = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 DOGMA_FRAME = "dogma-action"
@@ -58,6 +59,20 @@ def frozen_icon_counts(state: GameState) -> tuple[Icon, int, int] | None:
         ):
             return Icon(icon), activator, opponent
     return None
+
+
+class VariableScope(StrEnum):
+    """Scope used for values that must survive one printed-effect boundary.
+
+    ``CARD_EXECUTION`` persists across the printed ordinals of one card execution. For a paid
+    Dogma action that means the dogma root shared by its scheduled entries; for nested execution
+    it means only the innermost ``nested-N`` program scope, so skipped demands cannot read an
+    unrelated outer card's causal result.
+    """
+
+    LOCAL = "local"
+    CARD_EXECUTION = "card-execution"
+    ROOT = "root"
 
 
 class EffectStatus(StrEnum):
@@ -158,6 +173,27 @@ class EffectContext:
         )
 
 
+def variable_context(context: EffectContext, scope: VariableScope) -> EffectContext:
+    """Return the context that owns one persisted declarative value.
+
+    Direct scheduled ordinals communicate through the dogma root. Nested cards instead use their
+    innermost ``nested-N`` scope, isolating causal results from outer and sibling executions.
+    """
+
+    if scope is VariableScope.LOCAL:
+        return context
+    if scope is VariableScope.ROOT or not context.nested:
+        return replace(context, scope=context.scope.split("/", maxsplit=1)[0])
+    parts = context.scope.split("/")
+    nested_index = max(
+        (index for index, part in enumerate(parts) if part.startswith("nested-")),
+        default=-1,
+    )
+    if nested_index < 0:
+        raise EffectInvariantError("nested context has no nested execution scope")
+    return replace(context, scope="/".join(parts[: nested_index + 1]))
+
+
 @dataclass(frozen=True, slots=True)
 class EffectEvent:
     """One versioned event tying a reveal or state change to its full cause."""
@@ -177,6 +213,7 @@ class EffectEvent:
     nested: bool
     change: ChangeRecord | None = None
     card_ids: tuple[CardId, ...] = ()
+    revealed_colors: tuple[Color, ...] = ()
     achievement_player: PlayerId | None = None
     achievement_id: NormalAchievementId | SpecialAchievementId | None = None
     atomic_group_id: int | None = None
@@ -196,6 +233,10 @@ class EffectEvent:
             raise ValueError("atomic group ID must be positive")
         if len(set(self.card_ids)) != len(self.card_ids):
             raise ValueError("event card IDs cannot contain duplicates")
+        if len(set(self.revealed_colors)) != len(self.revealed_colors):
+            raise ValueError("event revealed colours cannot contain duplicates")
+        if self.revealed_colors and self.kind is not EffectEventKind.REVEAL:
+            raise ValueError("only a reveal event carries public colours")
         has_achievement = self.achievement_player is not None or self.achievement_id is not None
         if has_achievement != (self.kind is EffectEventKind.ACHIEVEMENT):
             raise ValueError("only an achievement event carries claim provenance")

@@ -12,6 +12,7 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
+    BatchNode,
     CardSelector,
     CardSelectorKind,
     ConditionNode,
@@ -46,7 +47,8 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
     CARD_ID,
     (ProgramEffect(DogmaEffectId(CARD_ID, 1), False, "mysticism-effect"),),
     (
-        SequenceNode("mysticism-effect", ("draw-one", "reveal-one", "color-branch")),
+        SequenceNode("mysticism-effect", ("draw-and-reveal", "color-branch")),
+        BatchNode("draw-and-reveal", ("draw-one", "reveal-one")),
         DrawNode("draw-one", ValueRef.literal(1), "drawn", player=EXECUTOR),
         RevealNode("reveal-one", CardSelector.from_variable("drawn")),
         ConditionNode(

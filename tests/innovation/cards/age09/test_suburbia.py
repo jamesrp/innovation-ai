@@ -37,6 +37,13 @@ def test_selected_cards_are_ordered_for_tucking_and_each_scores_one_reward() -> 
         CardId("agriculture"),
         CardId("clothing"),
     }
+    reward_groups = []
+    for card_id in (CardId("agriculture"), CardId("clothing")):
+        events = tuple(event for event in result.events if card_id in event.card_ids)
+        assert len(events) == 2
+        assert len({event.atomic_group_id for event in events}) == 1
+        reward_groups.append(events[0].atomic_group_id)
+    assert len(set(reward_groups)) == 2
 
 
 def test_finishing_with_no_selection_draws_no_rewards() -> None:

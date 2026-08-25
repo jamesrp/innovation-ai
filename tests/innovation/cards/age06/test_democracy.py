@@ -6,7 +6,12 @@ from support import ScenarioBuilder, choose_card, resolve_dogma, scenario
 
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.effects import load_effect_programs
-from innovation_ai.innovation.types import CardId, Color, PlayerId
+from innovation_ai.innovation.types import (
+    CardId,
+    Color,
+    PlayerId,
+    SpecialAchievementId,
+)
 
 P1 = PlayerId.PLAYER_1
 P2 = PlayerId.PLAYER_2
@@ -51,6 +56,39 @@ def test_equal_return_counts_reward_only_the_first_executor() -> None:
     )
     assert result.state.player(P2).score_pile == (CardId("flight"),)
     assert not result.state.player(P1).score_pile
+    grouped_returns = tuple(
+        event
+        for event in result.events
+        if event.change is not None and event.change.kind.value == "return"
+    )
+    assert len(grouped_returns) == 2
+    assert all(len(event.change.card_moves) == 2 for event in grouped_returns)  # type: ignore[union-attr]
+
+
+def test_a_prior_executor_with_preexisting_monument_does_not_corrupt_the_tie_record() -> None:
+    state = (
+        _shared_state()
+        .hand(P2, ("archery", "calendar"))
+        .hand(P1, ("agriculture", "alchemy"))
+        .achievements(P2, special=(SpecialAchievementId.MONUMENT,))
+        .counters(P2, scored=6)
+        .supply(8, ("flight", "mobility"))
+        .build()
+    )
+    result = resolve_dogma(
+        state,
+        "democracy",
+        choose_card("archery"),
+        choose_card("calendar"),
+        choose_card("agriculture"),
+        choose_card("alchemy"),
+        registry=REGISTRY,
+        programs=PROGRAMS,
+    )
+
+    assert result.state.player(P2).score_pile == (CardId("flight"),)
+    assert not result.state.player(P1).score_pile
+    assert result.state.supply.pile(8)[0] == CardId("mobility")
 
 
 def test_a_later_executor_returning_more_cards_sets_a_new_record() -> None:

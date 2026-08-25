@@ -62,6 +62,11 @@ def test_returning_two_cards_draws_and_scores_a_value_two_card() -> None:
     )
     assert result.status is EffectStatus.COMPLETE
     assert result.state.player(P1).score_pile == (CardId("canal-building"),)
+    reward_events = tuple(
+        event for event in result.events if CardId("canal-building") in event.card_ids
+    )
+    assert len(reward_events) == 2
+    assert len({event.atomic_group_id for event in reward_events}) == 1
     assert_conserved(result.state, REGISTRY)
 
 

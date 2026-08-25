@@ -5,8 +5,14 @@ from __future__ import annotations
 from support import ScenarioBuilder, resolve_dogma, scenario
 
 from innovation_ai.innovation.catalog import load_card_registry
-from innovation_ai.innovation.effects import load_effect_programs
-from innovation_ai.innovation.types import CardId, Color, PlayerId
+from innovation_ai.innovation.effects import EffectStatus, load_effect_programs
+from innovation_ai.innovation.types import (
+    CardId,
+    Color,
+    NormalAchievementId,
+    PlayerId,
+    SpecialAchievementId,
+)
 
 P1 = PlayerId.PLAYER_1
 P2 = PlayerId.PLAYER_2
@@ -40,13 +46,34 @@ def test_non_yellow_draws_leave_the_original_bottom_to_be_scored() -> None:
     assert result.state.player(P1).board.stack(Color.YELLOW).cards == (CardId("steam-engine"),)
 
 
-def test_each_draw_and_its_tuck_share_an_atomic_group() -> None:
+def test_the_complete_two_pair_instruction_shares_one_atomic_group() -> None:
     state = _solo().supply(4, ("colonialism", "enterprise")).build()
     result = resolve_dogma(state, "steam-engine", registry=REGISTRY, programs=PROGRAMS)
-    for card_id in (CardId("colonialism"), CardId("enterprise")):
-        events = tuple(event for event in result.events if card_id in event.card_ids)
-        assert len(events) == 2
-        assert len({event.atomic_group_id for event in events}) == 1
+    events = tuple(
+        event
+        for event in result.events
+        if CardId("colonialism") in event.card_ids or CardId("enterprise") in event.card_ids
+    )
+    assert len(events) == 4
+    assert len({event.atomic_group_id for event in events}) == 1
+
+
+def test_sixth_achievement_waits_until_both_required_tucks_finish() -> None:
+    state = (
+        _solo()
+        .achievements(P1, normal=tuple(NormalAchievementId)[:5])
+        .counters(P1, tucked=5)
+        .supply(4, ("colonialism", "enterprise"))
+        .build()
+    )
+    result = resolve_dogma(state, "steam-engine", registry=REGISTRY, programs=PROGRAMS)
+
+    assert result.status is EffectStatus.TERMINAL
+    assert SpecialAchievementId.MONUMENT in result.state.player(P1).special_achievements
+    assert result.state.player(P1).board.stack(Color.RED).bottom == CardId("colonialism")
+    assert result.state.player(P1).board.stack(Color.PURPLE).bottom == CardId("enterprise")
+    # The later bottom-yellow score is outside the completed tuck instruction and is interrupted.
+    assert not result.state.player(P1).score_pile
 
 
 def test_an_equal_factory_opponent_shares_first_and_causes_one_bonus_draw() -> None:

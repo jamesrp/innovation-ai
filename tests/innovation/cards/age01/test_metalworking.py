@@ -54,7 +54,7 @@ def test_a_castle_draw_is_scored_and_the_effect_repeats() -> None:
     assert_conserved(result.state, REGISTRY)
 
 
-def test_every_drawn_card_is_revealed_exactly_once() -> None:
+def test_every_drawn_card_is_revealed_exactly_once_and_atomically() -> None:
     state = _solo().supply(1, ("archery", "agriculture")).build()
     result = resolve_dogma(state, "metalworking", registry=REGISTRY, programs=PROGRAMS)
     revealed = tuple(
@@ -64,6 +64,56 @@ def test_every_drawn_card_is_revealed_exactly_once() -> None:
         for card_id in event.card_ids
     )
     assert revealed == (CardId("archery"), CardId("agriculture"))
+    for card_id in revealed:
+        draw_reveal = tuple(
+            event
+            for event in result.events
+            if card_id in event.card_ids
+            and (
+                event.kind is EffectEventKind.REVEAL
+                or (event.change is not None and event.change.kind.value == "draw")
+            )
+        )
+        assert len(draw_reveal) == 2
+        assert len({event.atomic_group_id for event in draw_reveal}) == 1
+
+
+def test_a_legal_seventeen_castle_streak_exceeds_the_old_age_one_ceiling() -> None:
+    castle_tops: dict[int, tuple[CardId, ...]] = {}
+    removed: list[CardId] = []
+    for age in range(1, 4):
+        castles = tuple(
+            card.id
+            for card in REGISTRY.cards
+            if card.age == age
+            and Icon.CASTLE in card.functional_icons
+            and card.id != CardId("metalworking")
+        )
+        castle_tops[age] = castles
+        non_castles = sorted(
+            (
+                card.id
+                for card in REGISTRY.cards
+                if card.age == age and Icon.CASTLE not in card.functional_icons
+            ),
+            key=str,
+        )
+        # Leave one card for the hidden normal achievement; every other non-castle is out of the
+        # supplies so empty-pile fallback reaches the complete 8+5+4 castle streak.
+        removed.extend(
+            card_id
+            for card_id in non_castles[1:]
+            if card_id not in {CardId("metalworking"), CardId("pottery")}
+        )
+
+    builder = _solo().removed(removed).supply(4, ("anatomy",))
+    for age, cards in castle_tops.items():
+        builder.supply(age, cards)
+    result = resolve_dogma(builder.build(), "metalworking", registry=REGISTRY, programs=PROGRAMS)
+
+    assert result.status is EffectStatus.COMPLETE
+    assert len(result.state.player(P1).score_pile) == 17
+    assert result.state.player(P1).hand == (CardId("anatomy"),)
 
 
 def test_a_reveal_marker_is_public_while_the_card_is_face_up() -> None:

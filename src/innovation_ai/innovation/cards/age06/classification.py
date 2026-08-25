@@ -1,21 +1,21 @@
-"""CLASSIFICATION - reveal only a hand card's colour, take every opponent hand card
-of that colour, then meld every matching card from the executor's hand.
+"""CLASSIFICATION - publicly reveal a semantic hand colour, then transfer and meld it.
 
-The executor's exact initial card choice stays private: no ``RevealNode`` is used because the card
-prints "reveal the color", not "reveal a card".  A colour binding drives relational selectors;
-all matching transfers and melds are mandatory.  Only the order of same-colour melds is chosen,
-because that order determines the resulting top card.
+The first choice enumerates distinct colours present in the executor's hand, never exact private
+card identities. A transient public colour marker and reveal event remain visible while the
+matching transfer and meld instruction resolves.
 """
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Any, Final
 
+from innovation_ai.innovation.effects.model import get_effect_variable
 from innovation_ai.innovation.effects.program import (
     ALL_OTHER_PLAYERS,
     EXECUTOR,
     CardSelector,
     CardSelectorKind,
+    ChoiceColorSource,
     ChoiceKind,
     ChoiceNode,
     EffectProgram,
@@ -24,8 +24,7 @@ from innovation_ai.innovation.effects.program import (
     MoveNode,
     OrderGroup,
     ProgramEffect,
-    SelectorRelation,
-    SelectorRelationKind,
+    RevealColorNode,
     SequenceNode,
     ZoneKind,
 )
@@ -33,16 +32,28 @@ from innovation_ai.innovation.types import CardId, DogmaEffectId
 
 CARD_ID: Final[CardId] = CardId("classification")
 
-_CHOSEN_CARD: Final = CardSelector.from_variable("colour-card")
+
+def _matches_revealed_color(state: Any, context: Any, registry: Any) -> bool:
+    candidate = get_effect_variable(state, context, "_candidate")
+    chosen = get_effect_variable(state, context, "revealed-colour")
+    return (
+        isinstance(candidate, str)
+        and isinstance(chosen, str)
+        and registry.card(CardId(candidate)).color.value == chosen
+    )
+
+
+PREDICATES: Final = {"matches-revealed-color": _matches_revealed_color}
+
 _MATCHING_OPPONENT_CARDS: Final = CardSelector(
     CardSelectorKind.HAND,
     ALL_OTHER_PLAYERS,
-    relation=SelectorRelation(SelectorRelationKind.SAME_COLOR_AS_ANY, _CHOSEN_CARD),
+    predicate="matches-revealed-color",
 )
 _MATCHING_EXECUTOR_CARDS: Final = CardSelector(
     CardSelectorKind.HAND,
     EXECUTOR,
-    relation=SelectorRelation(SelectorRelationKind.SAME_COLOR_AS_ANY, _CHOSEN_CARD),
+    predicate="matches-revealed-color",
 )
 
 EFFECTS: Final[EffectProgram] = EffectProgram(
@@ -53,8 +64,8 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         SequenceNode(
             "classification-effect",
             (
-                "choose-colour-card",
-                "bind-revealed-colour",
+                "choose-colour",
+                "reveal-colour",
                 "take-matching-cards",
                 "snapshot-melds",
                 "order-melds",
@@ -62,13 +73,14 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             ),
         ),
         ChoiceNode(
-            "choose-colour-card",
-            ChoiceKind.CARD,
-            "colour-card",
+            "choose-colour",
+            ChoiceKind.COLOR,
+            "revealed-colour",
             chooser=EXECUTOR,
-            cards=CardSelector.hand(EXECUTOR),
+            target_player=EXECUTOR,
+            color_source=ChoiceColorSource.PRESENT_IN_HAND,
         ),
-        LetNode("bind-revealed-colour", "revealed-colour", color_of="colour-card"),
+        RevealColorNode("reveal-colour", "revealed-colour"),
         MoveNode(
             "take-matching-cards",
             MovementKind.TRANSFER,

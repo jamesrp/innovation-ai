@@ -1,16 +1,12 @@
-"""THE PIRATE CODE - effect 1: "I demand you transfer two cards of value 4 or less from
-your score pile to my score pile!"
-effect 2: "If any card was transferred due to the demand, score the lowest top card with a
-crown from your board."
+"""THE PIRATE CODE - demand two low score cards, then conditionally score a crown top.
 
-The demand victim chooses the exact private score cards, with mandatory partial execution when
-fewer than two qualify. The subset is canonical but victim-owned (decisions 13/16). The second
-ordinal reads whether the preceding demand entry caused a gameplay change in this dogma action.
+The transfer result is persisted in this card execution's causal scope, so nested execution with
+its demand filtered out cannot inherit an unrelated outer mutation.
 """
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     ACTIVATOR,
@@ -28,27 +24,13 @@ from innovation_ai.innovation.effects.program import (
     Predicate,
     ProgramEffect,
     SequenceNode,
+    VariableScope,
     ZoneKind,
 )
 from innovation_ai.innovation.types import CardId, DogmaEffectId, Icon
 
 CARD_ID: Final[CardId] = CardId("the-pirate-code")
 
-
-def _demand_transferred_a_card(state: Any, context: Any, registry: Any) -> bool:
-    """Read the root dogma change count before the first non-demand ordinal begins."""
-
-    del context, registry
-    return any(
-        variable.name == "dogma:qualifying-change-count"
-        and isinstance(variable.value, int)
-        and not isinstance(variable.value, bool)
-        and variable.value > 0
-        for variable in state.effect_variables
-    )
-
-
-PREDICATES: Final = {"demand-transferred-a-card": _demand_transferred_a_card}
 
 EFFECTS: Final[EffectProgram] = EffectProgram(
     "the-pirate-code-v1",
@@ -74,11 +56,16 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             CardSelector.from_variable("chosen-score-cards"),
             destination_player=ACTIVATOR,
             destination_zone=ZoneKind.SCORE,
+            result_variable="pirate-demand-transferred",
+            result_scope=VariableScope.CARD_EXECUTION,
             moved_variable="transferred-cards",
         ),
         ConditionNode(
             "pirate-follow-up",
-            Predicate.named("demand-transferred-a-card"),
+            Predicate.truthy(
+                "pirate-demand-transferred",
+                scope=VariableScope.CARD_EXECUTION,
+            ),
             "score-lowest-crown",
         ),
         SequenceNode(

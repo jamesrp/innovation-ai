@@ -33,3 +33,8 @@ def test_all_preexisting_cards_in_the_destination_stack_are_scored() -> None:
         CardId("tools"),
         CardId("genetics"),
     }
+    draw_meld = tuple(
+        event for event in result.events if CardId("bioengineering") in event.card_ids
+    )
+    assert len(draw_meld) == 2
+    assert len({event.atomic_group_id for event in draw_meld}) == 1

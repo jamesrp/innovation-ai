@@ -37,6 +37,7 @@ from innovation_ai.innovation.board import (
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.observations import GameObservation, observe
 from innovation_ai.innovation.state import (
+    PUBLIC_REVEALED_COLOR_PREFIX,
     ColorStack,
     EffectFrameState,
     GamePhase,
@@ -97,6 +98,7 @@ from .model import (
     get_effect_variable,
     make_frame,
     set_effect_variable,
+    variable_context,
 )
 from .program import (
     AbortDogmaNode,
@@ -111,6 +113,7 @@ from .program import (
     Cmp,
     CollectNode,
     ConditionNode,
+    DrawAndMoveNode,
     DrawNode,
     EffectNode,
     EffectProgram,
@@ -122,6 +125,7 @@ from .program import (
     KeepNode,
     LetNode,
     MovementKind,
+    MovementResultMode,
     MoveNode,
     NestedNode,
     NoOpNode,
@@ -134,6 +138,7 @@ from .program import (
     RearrangeNode,
     RemoveAllPlayCardsNode,
     RepeatNode,
+    RevealColorNode,
     RevealNode,
     Rounding,
     SelectorRelationKind,
@@ -144,7 +149,6 @@ from .program import (
     TimesNode,
     ValueRef,
     ValueRefKind,
-    VariableScope,
     WinMetric,
     WinMode,
     WinNode,
@@ -667,8 +671,8 @@ def evaluate_predicate(
         )
 
     assert predicate.variable is not None
-    variable_context = _variable_context(context, predicate.variable_scope)
-    value = get_effect_variable(state, variable_context, predicate.variable)
+    scoped_context = variable_context(context, predicate.variable_scope)
+    value = get_effect_variable(state, scoped_context, predicate.variable)
     if predicate.kind is PredicateKind.VARIABLE_TRUTHY:
         return bool(value)
     if predicate.kind is PredicateKind.VARIABLE_EQUALS:
@@ -796,10 +800,6 @@ def _root_context(context: EffectContext) -> EffectContext:
     return replace(context, scope=context.scope.split("/", maxsplit=1)[0])
 
 
-def _variable_context(context: EffectContext, scope: VariableScope) -> EffectContext:
-    return _root_context(context) if scope is VariableScope.ROOT else context
-
-
 def _bump_step(state: GameState, context: EffectContext) -> GameState:
     root = _root_context(context)
     value = get_effect_variable(state, root, _STEP_COUNT, 0)
@@ -829,6 +829,7 @@ def _event(
     *,
     change: ChangeRecord | None = None,
     card_ids: tuple[CardId, ...] = (),
+    revealed_colors: tuple[Color, ...] = (),
     achievement_player: PlayerId | None = None,
     achievement_id: NormalAchievementId | SpecialAchievementId | None = None,
     atomic_group_id: int | None = None,
@@ -862,6 +863,7 @@ def _event(
         causal.nested,
         change=change,
         card_ids=card_ids,
+        revealed_colors=revealed_colors,
         achievement_player=achievement_player,
         achievement_id=achievement_id,
         atomic_group_id=group_id,
@@ -1044,6 +1046,23 @@ def _execute_leaf(
                     atomic_group_id=atomic_group_id,
                 )
                 events.append(event)
+    elif isinstance(node, RevealColorNode):
+        color = _color_variable(updated, context, node.color_variable)
+        if color is not None:
+            updated = set_effect_variable(
+                updated,
+                context,
+                f"{PUBLIC_REVEALED_COLOR_PREFIX}{node.node_id}",
+                color.value,
+            )
+            updated, event = _event(
+                updated,
+                context,
+                EffectEventKind.REVEAL,
+                revealed_colors=(color,),
+                atomic_group_id=atomic_group_id,
+            )
+            events.append(event)
     elif isinstance(node, KeepNode):
         cards = select_cards(updated, context, node.cards, registry, programs)
         if cards:
@@ -1060,9 +1079,17 @@ def _execute_leaf(
     elif isinstance(node, MoveNode):
         updated, change, moved = _movement_change(updated, context, node, registry, programs)
         if node.result_variable is not None:
-            result_context = _variable_context(context, node.result_scope)
+            result_context = variable_context(context, node.result_scope)
+            movement_result = change.changed
+            if node.result_mode is MovementResultMode.ANY:
+                previous = get_effect_variable(updated, result_context, node.result_variable, False)
+                if not isinstance(previous, bool):
+                    raise EffectInvariantError(
+                        f"movement result {node.result_variable!r} is not boolean"
+                    )
+                movement_result = previous or movement_result
             updated = set_effect_variable(
-                updated, result_context, node.result_variable, change.changed
+                updated, result_context, node.result_variable, movement_result
             )
         if node.moved_variable is not None:
             updated = set_effect_variable(
@@ -1081,6 +1108,53 @@ def _execute_leaf(
                 atomic_group_id=atomic_group_id,
             )
             events.append(event)
+    elif isinstance(node, DrawAndMoveNode):
+        player = resolve_player(node.player, context, updated)
+        total = max(0, resolve_value(updated, context, node.count, registry, programs))
+        if total > node.maximum_iterations:
+            raise EffectInvariantError(
+                f"draw-and-move node {node.node_id} requested {total} iterations, "
+                f"exceeding {node.maximum_iterations}"
+            )
+        group_id = atomic_group_id if atomic_group_id is not None else updated.next_event_id
+        for _ in range(total):
+            updated, draw_change, draw_result = draw_card(
+                updated,
+                resolve_value(updated, context, node.requested_age, registry, programs),
+                player,
+                registry,
+            )
+            if draw_change.changed:
+                updated, event = _event(
+                    updated,
+                    context,
+                    EffectEventKind.CHANGE,
+                    change=draw_change,
+                    card_ids=(draw_result.card_id,) if draw_result.card_id is not None else (),
+                    atomic_group_id=group_id,
+                )
+                events.append(event)
+            if draw_result.beyond_age_ten:
+                terminal = draw_beyond_age_ten_result(updated, registry)
+                updated = apply_terminal(updated, terminal)
+                return updated, tuple(events), EffectStatus.TERMINAL
+            assert draw_result.card_id is not None
+            if node.movement is MovementKind.MELD:
+                updated, move_change = meld_card(updated, player, draw_result.card_id, registry)
+            elif node.movement is MovementKind.TUCK:
+                updated, move_change = tuck_card(updated, player, draw_result.card_id, registry)
+            else:
+                updated, move_change = score_card(updated, player, draw_result.card_id, registry)
+            if move_change.changed:
+                updated, event = _event(
+                    updated,
+                    context,
+                    EffectEventKind.CHANGE,
+                    change=move_change,
+                    card_ids=(draw_result.card_id,),
+                    atomic_group_id=group_id,
+                )
+                events.append(event)
     elif isinstance(node, ExchangeNode):
         first_location = _selector_location(updated, context, node.first)
         second_location = _selector_location(updated, context, node.second)
@@ -1171,10 +1245,11 @@ def _execute_leaf(
             )
             events.append(event)
     elif isinstance(node, LetNode):
+        result_context = variable_context(context, node.result_scope)
         if node.value is not None:
             updated = set_effect_variable(
                 updated,
-                context,
+                result_context,
                 node.result_variable,
                 resolve_value(updated, context, node.value, registry, programs),
             )
@@ -1182,7 +1257,7 @@ def _execute_leaf(
             source = _card_variable(updated, context, node.color_of)
             updated = set_effect_variable(
                 updated,
-                context,
+                result_context,
                 node.result_variable,
                 None if source is None else registry.card(source).color.value,
             )
@@ -1191,7 +1266,7 @@ def _execute_leaf(
             selected = select_cards(updated, context, node.cards, registry, programs)
             updated = set_effect_variable(
                 updated,
-                context,
+                result_context,
                 node.result_variable,
                 tuple(card_id.value for card_id in selected),
             )
@@ -1432,13 +1507,21 @@ def _hidden_choice_is_direct(
     return all(card_id in visible for card_id in cards)
 
 
-def _choice_colors(state: GameState, context: EffectContext, node: ChoiceNode) -> tuple[Color, ...]:
+def _choice_colors(
+    state: GameState,
+    context: EffectContext,
+    node: ChoiceNode,
+    registry: CardRegistry,
+) -> tuple[Color, ...]:
     target = node.target_player or node.chooser
     player = state.player(resolve_player(target, context, state))
     if node.color_source is ChoiceColorSource.PRESENT_ON_BOARD:
         # Decision 15: every colour the chooser currently has is legal, even when the resulting
         # splay is a no-op; an absent colour is not.
         colors = tuple(color for color in Color if player.board.stack(color).cards)
+    elif node.color_source is ChoiceColorSource.PRESENT_IN_HAND:
+        present = {registry.card(card_id).color for card_id in player.hand}
+        colors = tuple(color for color in Color if color in present)
     else:
         colors = node.colors
     if node.required_splay is not None:
@@ -1512,7 +1595,8 @@ def _choice_actions(
                 )
     elif node.choice_kind is ChoiceKind.COLOR:
         actions.extend(
-            ChooseColorAction(decision_id, color) for color in _choice_colors(state, context, node)
+            ChooseColorAction(decision_id, color)
+            for color in _choice_colors(state, context, node, registry)
         )
     elif node.choice_kind is ChoiceKind.PLAYER:
         resolved = tuple(
@@ -2031,8 +2115,16 @@ def _advance_node(
             qualifying_changes=changes,
         )
 
+    leaf_group_id = state.next_event_id if isinstance(node, DrawAndMoveNode) else None
     leaf_baseline = qualifying_change_count(state, context)
-    updated, events, status = _execute_leaf(state, context, node, registry, programs)
+    updated, events, status = _execute_leaf(
+        state,
+        context,
+        node,
+        registry,
+        programs,
+        atomic_group_id=leaf_group_id,
+    )
     if status is EffectStatus.TERMINAL:
         changes = leaf_baseline + sum(event.changed for event in events)
         return EffectResolution(
@@ -2044,7 +2136,12 @@ def _advance_node(
     all_leaf_events = list(events)
     # Decision 12: one card-effect instruction is the normal atomic boundary, so a non-batch leaf
     # runs the achievement check immediately after its mutation.
-    updated, boundary_events, terminal = _achievement_boundary(updated, context, registry)
+    updated, boundary_events, terminal = _achievement_boundary(
+        updated,
+        context,
+        registry,
+        atomic_group_id=leaf_group_id,
+    )
     all_leaf_events.extend(boundary_events)
     if terminal is not None:
         changes = leaf_baseline + sum(event.changed for event in all_leaf_events)

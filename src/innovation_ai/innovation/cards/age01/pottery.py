@@ -21,6 +21,7 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
+    BatchNode,
     CardSelector,
     ChoiceKind,
     ChoiceNode,
@@ -60,7 +61,7 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ConditionNode("if-returned", Predicate.truthy("returned"), "return-and-score"),
         SequenceNode(
             "return-and-score",
-            ("snapshot-count", "order-returns", "return-cards", "draw-reward", "score-reward"),
+            ("snapshot-count", "order-returns", "return-cards", "draw-and-score-reward"),
         ),
         # Decision 17: the reward value is fixed before any card leaves the hand.
         LetNode("snapshot-count", "return-count", value=ValueRef.count("returned")),
@@ -78,6 +79,7 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             CardSelector.from_variable("returned"),
             order_variable="return-order",
         ),
+        BatchNode("draw-and-score-reward", ("draw-reward", "score-reward")),
         DrawNode("draw-reward", ValueRef.from_variable("return-count"), "reward", player=EXECUTOR),
         MoveNode(
             "score-reward",

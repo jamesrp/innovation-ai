@@ -41,7 +41,7 @@ def test_a_matching_card_is_melded_then_an_extra_one_is_drawn() -> None:
     assert_conserved(result.state, REGISTRY)
 
 
-def test_each_initial_draw_is_revealed_exactly_once() -> None:
+def test_each_initial_draw_is_revealed_exactly_once_and_atomically() -> None:
     state = _solo().supply(1, ("city-states", "agriculture")).build()
     result = resolve_dogma(state, "mysticism", registry=REGISTRY, programs=PROGRAMS)
     revealed = tuple(
@@ -51,6 +51,17 @@ def test_each_initial_draw_is_revealed_exactly_once() -> None:
         for card_id in event.card_ids
     )
     assert revealed == (CardId("city-states"),)
+    draw_reveal = tuple(
+        event
+        for event in result.events
+        if CardId("city-states") in event.card_ids
+        and (
+            event.kind is EffectEventKind.REVEAL
+            or (event.change is not None and event.change.kind.value == "draw")
+        )
+    )
+    assert len(draw_reveal) == 2
+    assert len({event.atomic_group_id for event in draw_reveal}) == 1
 
 
 def test_a_shared_nonmatching_reveal_still_earns_one_bonus_draw() -> None:

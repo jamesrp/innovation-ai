@@ -16,6 +16,7 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
+    BatchNode,
     CardSelector,
     ConditionNode,
     DrawNode,
@@ -39,15 +40,16 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
     CARD_ID,
     (ProgramEffect(DogmaEffectId(CARD_ID, 1), False, "metalworking-repeat"),),
     (
-        # There are only fifteen age 1 cards, so sixteen iterations cannot be reached legally and
-        # a breach is a genuine engine defect rather than a long game.
+        # The full catalog has a finite legal streak well beyond age 1 because empty-pile draws
+        # fall upward. The card count is the natural hard ceiling; any breach is an engine defect.
         RepeatNode(
             "metalworking-repeat",
             "metalworking-body",
             Predicate.card_has_icon("drawn", Icon.CASTLE),
-            maximum_iterations=16,
+            maximum_iterations=105,
         ),
-        SequenceNode("metalworking-body", ("draw-one", "reveal-one", "castle-branch")),
+        SequenceNode("metalworking-body", ("draw-and-reveal", "castle-branch")),
+        BatchNode("draw-and-reveal", ("draw-one", "reveal-one")),
         DrawNode("draw-one", ValueRef.literal(1), "drawn", player=EXECUTOR),
         RevealNode("reveal-one", CardSelector.from_variable("drawn")),
         ConditionNode(

@@ -11,18 +11,14 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
-    BatchNode,
-    CardSelector,
     ChoiceKind,
     ChoiceNode,
-    DrawNode,
+    DrawAndMoveNode,
     EffectProgram,
     MovementKind,
-    MoveNode,
     ProgramEffect,
     SequenceNode,
     SplayNode,
-    TimesNode,
     ValueRef,
     ValueRefKind,
 )
@@ -38,18 +34,12 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
         ProgramEffect(DogmaEffectId(CARD_ID, 2), False, "industrialization-splay"),
     ),
     (
-        TimesNode(
+        DrawAndMoveNode(
             "industrialization-tucks",
+            ValueRef.literal(6),
             ValueRef(ValueRefKind.COLORS_WITH_ICON, icon=Icon.FACTORY, player=EXECUTOR),
-            "draw-and-tuck-six",
-        ),
-        BatchNode("draw-and-tuck-six", ("draw-six", "tuck-six")),
-        DrawNode("draw-six", ValueRef.literal(6), "drawn-six", player=EXECUTOR),
-        MoveNode(
-            "tuck-six",
             MovementKind.TUCK,
-            CardSelector.from_variable("drawn-six"),
-            destination_player=EXECUTOR,
+            player=EXECUTOR,
         ),
         SequenceNode("industrialization-splay", ("choose-splay", "splay-right")),
         ChoiceNode(

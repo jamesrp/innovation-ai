@@ -6,7 +6,7 @@ from support import ScenarioBuilder, resolve_dogma, scenario
 
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.effects import EffectStatus, load_effect_programs
-from innovation_ai.innovation.types import Color, PlayerId
+from innovation_ai.innovation.types import CardId, Color, PlayerId
 
 P1 = PlayerId.PLAYER_1
 P2 = PlayerId.PLAYER_2
@@ -35,6 +35,23 @@ def test_robotics_and_software_may_be_top_cards_on_different_boards() -> None:
     assert result.status is EffectStatus.TERMINAL
     assert result.terminal is not None
     assert result.terminal.winners == (P2,)
+    draw_score = tuple(event for event in result.events if CardId("databases") in event.card_ids)
+    assert len(draw_score) == 2
+    assert len({event.atomic_group_id for event in draw_score}) == 1
+
+
+def test_missing_required_top_card_skips_the_direct_win() -> None:
+    state = (
+        scenario(REGISTRY)
+        .board(P1, Color.PURPLE, ("a-i",))
+        .board(P1, Color.RED, ("robotics",))
+        .supply(10, ("databases",))
+        .build()
+    )
+    result = resolve_dogma(state, "a-i", registry=REGISTRY, programs=PROGRAMS)
+
+    assert result.status is EffectStatus.COMPLETE
+    assert result.terminal is None
 
 
 def test_a_lowest_score_tie_ignores_the_win_effect() -> None:

@@ -5,8 +5,14 @@ from __future__ import annotations
 from support import decline, resolve_dogma, scenario
 
 from innovation_ai.innovation.catalog import load_card_registry
-from innovation_ai.innovation.effects import load_effect_programs
-from innovation_ai.innovation.types import CardId, Color, PlayerId
+from innovation_ai.innovation.effects import EffectStatus, load_effect_programs
+from innovation_ai.innovation.types import (
+    CardId,
+    Color,
+    NormalAchievementId,
+    PlayerId,
+    SpecialAchievementId,
+)
 
 P1 = PlayerId.PLAYER_1
 P2 = PlayerId.PLAYER_2
@@ -36,3 +42,30 @@ def test_factory_colour_count_is_snapshotted_before_new_tucks_expose_factories()
         for move in event.change.card_moves
     )
     assert len(tuck_moves) == 2
+    grouped = tuple(
+        event
+        for event in result.events
+        if CardId("canning") in event.card_ids or CardId("classification") in event.card_ids
+    )
+    assert len(grouped) == 4
+    assert len({event.atomic_group_id for event in grouped}) == 1
+
+
+def test_sixth_achievement_waits_until_every_snapshotted_tuck_finishes() -> None:
+    state = (
+        scenario(REGISTRY)
+        .board(P1, Color.RED, ("industrialization",))
+        .board(P1, Color.BLUE, ("chemistry",))
+        .board(P2, Color.YELLOW, ("agriculture",))
+        .achievements(P1, normal=tuple(NormalAchievementId)[:5])
+        .counters(P1, tucked=5)
+        .supply(6, ("canning", "classification"))
+        .build()
+    )
+    result = resolve_dogma(state, "industrialization", registry=REGISTRY, programs=PROGRAMS)
+
+    assert result.status is EffectStatus.TERMINAL
+    assert SpecialAchievementId.MONUMENT in result.state.player(P1).special_achievements
+    assert result.state.player(P1).board.stack(Color.YELLOW).bottom == CardId("canning")
+    assert result.state.player(P1).board.stack(Color.GREEN).bottom == CardId("classification")
+    assert result.decisions == ()

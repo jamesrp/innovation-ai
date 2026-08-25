@@ -10,16 +10,14 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
-    BatchNode,
     CardSelector,
-    DrawNode,
+    DrawAndMoveNode,
     EffectProgram,
     MovementKind,
     MoveNode,
     ProgramEffect,
     SequenceNode,
     StackPosition,
-    TimesNode,
     ValueRef,
 )
 from innovation_ai.innovation.types import CardId, Color, DogmaEffectId
@@ -32,14 +30,12 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
     (ProgramEffect(DogmaEffectId(CARD_ID, 1), False, "steam-engine-effect"),),
     (
         SequenceNode("steam-engine-effect", ("draw-tuck-two", "score-bottom-yellow")),
-        TimesNode("draw-tuck-two", ValueRef.literal(2), "draw-tuck-one"),
-        BatchNode("draw-tuck-one", ("draw-four", "tuck-four")),
-        DrawNode("draw-four", ValueRef.literal(4), "drawn-four", player=EXECUTOR),
-        MoveNode(
-            "tuck-four",
+        DrawAndMoveNode(
+            "draw-tuck-two",
+            ValueRef.literal(4),
+            ValueRef.literal(2),
             MovementKind.TUCK,
-            CardSelector.from_variable("drawn-four"),
-            destination_player=EXECUTOR,
+            player=EXECUTOR,
         ),
         MoveNode(
             "score-bottom-yellow",

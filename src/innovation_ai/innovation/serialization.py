@@ -371,6 +371,7 @@ def observation_from_payload(value: object) -> GameObservation:
             "information_policy",
             "rules_version",
             "revealed_cards",
+            "revealed_colors",
             "schema_version",
         },
         "observation",
@@ -418,6 +419,7 @@ def observation_from_payload(value: object) -> GameObservation:
         ),
         rules_version=_string(payload["rules_version"], "observation.rules_version"),
         revealed_cards=_cards(payload["revealed_cards"], "observation.revealed_cards"),
+        revealed_colors=_enums(Color, payload["revealed_colors"], "observation.revealed_colors"),
     )
 
 

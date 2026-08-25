@@ -13,6 +13,7 @@ from typing import Final
 
 from innovation_ai.innovation.effects.program import (
     EXECUTOR,
+    BatchNode,
     CardSelector,
     ClaimAchievementNode,
     ConditionNode,
@@ -45,7 +46,8 @@ EFFECTS: Final[EffectProgram] = EffectProgram(
             Predicate.card_color_in("drawn", (Color.GREEN, Color.BLUE)),
             maximum_iterations=105,
         ),
-        SequenceNode("astronomy-body", ("draw-six", "reveal-six", "if-green-or-blue")),
+        SequenceNode("astronomy-body", ("draw-and-reveal", "if-green-or-blue")),
+        BatchNode("draw-and-reveal", ("draw-six", "reveal-six")),
         DrawNode("draw-six", ValueRef.literal(6), "drawn", player=EXECUTOR),
         RevealNode("reveal-six", CardSelector.from_variable("drawn")),
         ConditionNode(
