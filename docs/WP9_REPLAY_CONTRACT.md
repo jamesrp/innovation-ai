@@ -12,8 +12,9 @@ fields, malformed effect frames, stale reveal/runtime relationships, and termina
 transient runtime are rejected.
 
 State schema 2 includes serializable program/node/dogma frames, scoped effect variables, and
-multi-scope physical reveal markers. Observation schema 2 exposes currently revealed identities.
-Decision schema 3 carries demand/shared/nested flags, frozen dogma icon counts, selection bounds,
+multi-scope physical reveal markers. Observation schema 3 exposes currently revealed identities
+and public revealed card attributes such as Classification's announced color. Decision schema 3
+carries demand/shared/nested flags, frozen dogma icon counts, selection bounds,
 incremental progress, and an explicit incremental-selection purpose that distinguishes bounded
 subsets from anti-factorial choose-next card ordering. Equal contracts produce byte-identical
 compact, key-sorted JSON.

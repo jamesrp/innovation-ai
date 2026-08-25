@@ -217,6 +217,9 @@ def test_real_batch_records_equal_independent_sequential_runs() -> None:
     assert tuple(batched.state(spec.game_id) for spec in specs) == tuple(
         result.state for result in sequential
     )
+
+
+def test_pull_runner_validates_a_submission_batch_before_committing() -> None:
     runner = PullGameRunner(SyntheticTerminalEngine(), (GameSpec("a", 907),))
     pending = runner.pending()
     valid = Submission("a", pending[0].decision.legal_actions[0])

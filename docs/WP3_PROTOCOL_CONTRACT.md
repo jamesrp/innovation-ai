@@ -57,5 +57,6 @@ Leak tests compare positions differing only by hidden identities and require equ
 `TerminalResult` uses `TerminalReason` and canonical winner tuples; no winners means a draw.
 Actions, decisions, observations, terminal results, and authoritative state all carry schema or
 rules/policy versions. State schema 2 includes multi-scope physical reveal markers; decision
-schema 2 includes effect context. `action_payload` and `decision_payload` produce deterministic
-semantic payloads suitable for logs and process boundaries.
+schema 3 includes effect context plus explicit incremental-selection purpose. `action_payload` and
+`decision_payload` produce deterministic semantic payloads suitable for logs and process
+boundaries.

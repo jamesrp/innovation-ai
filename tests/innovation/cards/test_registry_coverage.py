@@ -107,6 +107,9 @@ def test_every_card_resolves_from_its_minimum_board_state() -> None:
                 REGISTRY,
             )
         assert resolution.status in {EffectStatus.COMPLETE, EffectStatus.TERMINAL}, card.id
+
+
+def test_discovery_is_deterministic_and_cached() -> None:
     first = load_effect_programs()
     assert load_effect_programs() is first
     rebuilt = build_effect_programs(REGISTRY)

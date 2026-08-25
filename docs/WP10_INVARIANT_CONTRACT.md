@@ -26,8 +26,9 @@ scores, and covered boards.
 
 Replay invokes state-local checks at the restored initial boundary and after every replayed action,
 in addition to verifying recorded decisions and hashes. A seeded setup-to-terminal log test
-contains real Dogma and nested effect choices. Runner integration compares real multi-game batch
-records and final states with independent sequential runs using independently seeded agents.
+contains real Dogma and effect choices; separate nested execution tests cover serialized nested
+choice boundaries. Runner integration compares real multi-game batch records and final states
+with independent sequential runs using independently seeded agents.
 
 ## Deterministic fuzzing
 
@@ -42,8 +43,8 @@ The default suite keeps a fast deterministic fuzz sample. The release-scale gate
 INNOVATION_LARGE_FUZZ_SEEDS=100 uv run pytest -q -m fuzz tests/innovation/test_fuzz.py
 ```
 
-The latest integration run on August 25, 2026 completed all 100 seeds: `4 passed, 1 deselected`
-in 143.68 seconds for the command above.
+The latest release run on August 25, 2026 completed all 100 required seeds. An extended audit run
+also completed 500 seeds without an engine error, state-hash divergence, or step-ceiling hang.
 
 The fuzzer checks player-safe observations on every generated state. Strong noninterference claims
 still belong to the focused hidden-equivalent-pair tests; random play does not synthesize a second

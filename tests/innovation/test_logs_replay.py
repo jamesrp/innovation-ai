@@ -94,6 +94,9 @@ def test_seeded_full_dogma_log_replays_every_decision_and_hash() -> None:
     assert replayed.transitions_replayed == log.transition_count
     assert replayed.state == recorder.state
     assert state_hash(replayed.state) == log.final_state_hash
+
+
+def test_mid_dogma_state_round_trips_at_a_public_choice_boundary() -> None:
     """A dogma action that pauses on a choice is an ordinary decision boundary."""
 
     registry = load_card_registry()
