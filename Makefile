@@ -7,10 +7,10 @@ install-ai:
 	uv sync --extra ai
 
 run:
-	uv run card-game-ai doctor
+	uv run innovation-ai doctor
 
 test:
-	uv run pytest --cov=card_game_ai --cov-report=term-missing
+	uv run pytest --cov=innovation_ai --cov-report=term-missing
 
 lint:
 	uv run ruff check .

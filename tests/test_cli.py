@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from card_game_ai.cli import main
+from innovation_ai.cli import main
 
 
 def test_doctor_reports_cpu(capsys: pytest.CaptureFixture[str]) -> None:
