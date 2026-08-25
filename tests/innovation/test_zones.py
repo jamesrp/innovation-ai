@@ -9,6 +9,7 @@ from innovation_ai.innovation.state import (
     GamePhase,
     GameState,
     SetupProvenance,
+    TerminalReason,
     TerminalState,
     build_setup_state,
 )
@@ -300,7 +301,7 @@ def test_removed_and_terminal_states_cannot_be_mutated() -> None:
     terminal = replace(
         state,
         phase=GamePhase.TERMINAL,
-        terminal_result=TerminalState("test", (PlayerId.PLAYER_1,)),
+        terminal_result=TerminalState(TerminalReason.CARD_EFFECT, (PlayerId.PLAYER_1,)),
     )
     with pytest.raises(ZoneOperationError, match="terminal"):
         draw_card(terminal, 1, PlayerId.PLAYER_1, registry)

@@ -22,10 +22,19 @@ from innovation_ai.innovation.types import (
 RULES_VERSION = "innovation-base-third-edition-2p-v1"
 INFORMATION_POLICY_VERSION = "rulebook-private-covered-v1"
 STATE_SCHEMA_VERSION = 1
+TERMINAL_SCHEMA_VERSION = 1
 SETUP_RNG_VERSION = "python-mt19937-shuffle-v1"
 
 type StateScalar = str | int | bool | None
 type StateValue = StateScalar | tuple[StateValue, ...]
+
+
+class TerminalReason(StrEnum):
+    """Stable reasons why an Innovation game ended."""
+
+    ACHIEVEMENT_VICTORY = "achievement-victory"
+    DRAW_BEYOND_AGE_10 = "draw-beyond-age-10"
+    CARD_EFFECT = "card-effect"
 
 
 class GamePhase(StrEnum):
@@ -272,15 +281,28 @@ class SetupProvenance:
 
 
 @dataclass(frozen=True, slots=True)
-class TerminalState:
-    """Minimal serializable terminal marker; WP3 defines legal terminal reasons."""
+class TerminalResult:
+    """Typed serializable terminal result; an empty winner tuple means a draw."""
 
-    reason: str
+    reason: TerminalReason
     winners: tuple[PlayerId, ...] = ()
+    schema_version: int = TERMINAL_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if not self.reason:
-            raise ValueError("terminal reason cannot be empty")
+        if len(set(self.winners)) != len(self.winners):
+            raise ValueError("terminal winners cannot contain duplicates")
+        canonical = tuple(sorted(self.winners, key=lambda player: player.value))
+        if canonical != self.winners:
+            raise ValueError("terminal winners must be in canonical player order")
+
+    @property
+    def is_draw(self) -> bool:
+        """Whether the game ended without a winner."""
+
+        return not self.winners
+
+
+TerminalState = TerminalResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,11 +320,13 @@ class GameState:
     turn_counters: TurnCounters
     pending_effects: tuple[EffectFrameState, ...]
     effect_variables: tuple[EffectVariable, ...]
+    starting_meld_decision_ids: tuple[int, int]
+    starting_meld_choices: tuple[CardId | None, CardId | None]
     next_decision_id: int
     next_event_id: int
     next_dogma_action_id: int
     setup: SetupProvenance
-    terminal_result: TerminalState | None = None
+    terminal_result: TerminalResult | None = None
     schema_version: int = STATE_SCHEMA_VERSION
     rules_version: str = RULES_VERSION
     information_policy_version: str = INFORMATION_POLICY_VERSION
@@ -312,6 +336,20 @@ class GameState:
             raise ValueError("players must be in canonical player order")
         if self.turn_number < 0 or self.paid_actions_remaining < 0:
             raise ValueError("turn fields cannot be negative")
+        if len(self.starting_meld_decision_ids) != len(PlayerId):
+            raise ValueError("starting meld decision IDs must be in canonical player order")
+        if len(set(self.starting_meld_decision_ids)) != len(PlayerId):
+            raise ValueError("starting meld decision IDs must be unique")
+        if any(decision_id < 1 for decision_id in self.starting_meld_decision_ids):
+            raise ValueError("starting meld decision IDs must be positive")
+        if len(self.starting_meld_choices) != len(PlayerId):
+            raise ValueError("starting meld choices must be in canonical player order")
+        if self.phase is not GamePhase.STARTING_MELDS and any(self.starting_meld_choices):
+            raise ValueError("starting meld choices must be cleared after setup")
+        if self.phase is GamePhase.STARTING_MELDS:
+            for player, choice in zip(self.players, self.starting_meld_choices, strict=True):
+                if choice is not None and choice not in player.hand:
+                    raise ValueError("a starting meld choice must be in that player's hand")
         if min(self.next_decision_id, self.next_event_id, self.next_dogma_action_id) < 1:
             raise ValueError("monotonic IDs must start at one")
         if self.phase is GamePhase.TERMINAL and self.terminal_result is None:
@@ -398,7 +436,9 @@ def build_setup_state_from_piles(
         turn_counters=TurnCounters.empty(),
         pending_effects=(),
         effect_variables=(),
-        next_decision_id=1,
+        starting_meld_decision_ids=(1, 2),
+        starting_meld_choices=(None, None),
+        next_decision_id=3,
         next_event_id=1,
         next_dogma_action_id=1,
         setup=SetupProvenance(
