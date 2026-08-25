@@ -10,15 +10,16 @@ turn, and nested card-effect choice will be exposed as a serializable first-clas
 strict separation between authoritative state and player-visible observations.
 
 The engine foundation now includes WP1's validated immutable card catalog, WP2's immutable
-authoritative state and geometry, and WP3's versioned semantic actions/decisions, simultaneous
-setup protocol, paid-turn accounting, typed terminal results, deterministic legal actions, and
-information-policy-safe observations. WP4 will resolve the serializable Dogma handoff frames.
+authoritative state and geometry, WP3's versioned semantic actions/decisions, and WP9's Freeze-A
+serialization, setup-provenanced logs, hash-verifying replay, and minimal play/replay CLI.
+WP4 will resolve the serializable Dogma handoff frames.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`
 - Implementation sequence: `docs/MILESTONE_1_PLAN.md`
 - WP2 state/geometry contract: `docs/WP2_STATE_CONTRACT.md`
 - WP3 protocol contract: `docs/WP3_PROTOCOL_CONTRACT.md`
+- WP9 serialization/replay contract: `docs/WP9_REPLAY_CONTRACT.md`
 - Rules interpretations: `docs/RULES_DECISIONS.md`
 - Agent conventions: `AGENTS.md`
 
@@ -39,4 +40,6 @@ uv run pytest
 uv run ruff check .
 uv run mypy src tests
 uv run innovation-ai doctor
+uv run innovation-ai play --seed 0 --log artifacts/game.json
+uv run innovation-ai replay artifacts/game.json
 ```
