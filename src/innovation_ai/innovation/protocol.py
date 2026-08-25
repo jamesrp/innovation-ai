@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from innovation_ai.innovation.achievements import (
+    check_atomic_boundary,
+    claim_normal_achievement,
+    eligible_normal_achievements,
+)
 from innovation_ai.innovation.actions import (
     AchieveAction,
     Action,
@@ -15,7 +20,7 @@ from innovation_ai.innovation.actions import (
     MeldAction,
     SemanticAction,
 )
-from innovation_ai.innovation.board import highest_top_value, score_value, top_cards
+from innovation_ai.innovation.board import highest_top_value, top_cards
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.observations import observe
 from innovation_ai.innovation.state import (
@@ -23,11 +28,11 @@ from innovation_ai.innovation.state import (
     EffectVariable,
     GamePhase,
     GameState,
-    TerminalReason,
     TerminalState,
     TurnCounters,
 )
-from innovation_ai.innovation.types import NormalAchievementId, PlayerId
+from innovation_ai.innovation.terminal import apply_terminal, draw_beyond_age_ten_result
+from innovation_ai.innovation.types import PlayerId
 from innovation_ai.innovation.zones import assert_state_invariants, draw_card, meld_card
 
 
@@ -106,22 +111,6 @@ def _starting_decisions(state: GameState, registry: CardRegistry) -> tuple[Decis
     return tuple(decisions)
 
 
-def _eligible_normal_achievements(
-    state: GameState, player_id: PlayerId, registry: CardRegistry
-) -> tuple[NormalAchievementId, ...]:
-    player = state.player(player_id)
-    claimed = {
-        achievement for candidate in state.players for achievement in candidate.normal_achievements
-    }
-    score = score_value(player, registry)
-    top_value = highest_top_value(player.board, registry)
-    return tuple(
-        achievement_id
-        for age, achievement_id in enumerate(NormalAchievementId, start=1)
-        if achievement_id not in claimed and score >= 5 * age and top_value >= age
-    )
-
-
 def _turn_actions(
     state: GameState, player_id: PlayerId, registry: CardRegistry
 ) -> tuple[SemanticAction, ...]:
@@ -132,7 +121,7 @@ def _turn_actions(
     actions.extend(DogmaAction(decision_id, card_id) for card_id in top_cards(player.board))
     actions.extend(
         AchieveAction(decision_id, achievement_id)
-        for achievement_id in _eligible_normal_achievements(state, player_id, registry)
+        for achievement_id in eligible_normal_achievements(state, player_id, registry)
     )
     return tuple(actions)
 
@@ -174,25 +163,27 @@ def current_decision(state: GameState, registry: CardRegistry | None = None) -> 
     return decisions[0] if decisions else None
 
 
-def _terminal_transition(state: GameState, result: TerminalState) -> Transition:
-    terminal = replace(state, phase=GamePhase.TERMINAL, terminal_result=result)
-    return Transition(terminal, terminal=result)
+def terminal_transition(state: GameState, result: TerminalState) -> Transition:
+    """Finalize the game immediately with ``result``.
+
+    This is the shared handoff used by the paid-action protocol and by card effects that award
+    victory or end the game. The caller must abandon every remaining dogma effect, sharing
+    bonus, and paid action once it returns.
+    """
+
+    return Transition(apply_terminal(state, result), terminal=result)
 
 
-def _draw_exhaustion_result(state: GameState, registry: CardRegistry) -> TerminalState:
-    scores = {player_id: score_value(state.player(player_id), registry) for player_id in PlayerId}
-    highest_score = max(scores.values())
-    candidates = tuple(player_id for player_id in PlayerId if scores[player_id] == highest_score)
-    if len(candidates) == 1:
-        return TerminalState(TerminalReason.DRAW_BEYOND_AGE_10, candidates)
-    achievement_counts = {
-        player_id: state.player(player_id).achievement_count for player_id in candidates
-    }
-    most_achievements = max(achievement_counts.values())
-    winners = tuple(
-        player_id for player_id in candidates if achievement_counts[player_id] == most_achievements
-    )
-    return TerminalState(TerminalReason.DRAW_BEYOND_AGE_10, winners if len(winners) == 1 else ())
+def _achievement_boundary(state: GameState, registry: CardRegistry) -> Transition | GameState:
+    """Run the special-achievement boundary check, stopping on an immediate win.
+
+    Returning a :class:`Transition` means the game ended and no further turn work may happen.
+    """
+
+    result = check_atomic_boundary(state, registry)
+    if result.terminal is not None:
+        return Transition(result.state, terminal=result.terminal)
+    return result.state
 
 
 def _advance_after_paid_action(state: GameState) -> GameState:
@@ -210,12 +201,22 @@ def _advance_after_paid_action(state: GameState) -> GameState:
 
 
 def _next_transition(state: GameState, registry: CardRegistry) -> Transition:
+    """Return the next decision after one completed unit of protocol work.
+
+    The achievement boundary check runs before the turn can rotate, so Monument's per-turn
+    counters are still intact when it evaluates. While effect frames remain pending, WP4 owns
+    the boundary checks inside the dogma action and this function simply hands control back.
+    """
+
     if state.phase is GamePhase.TERMINAL:
         assert state.terminal_result is not None
         return Transition(state, terminal=state.terminal_result)
     if state.pending_effects:
         return Transition(state, effect_resolution_pending=True)
-    advanced = _advance_after_paid_action(state)
+    checked = _achievement_boundary(state, registry)
+    if isinstance(checked, Transition):
+        return checked
+    advanced = _advance_after_paid_action(checked)
     decision = current_decision(advanced, registry)
     if decision is None:  # pragma: no cover - guarded by phase/pending checks
         raise EngineInvariantError("non-terminal state has no current decision")
@@ -261,6 +262,8 @@ def _apply_starting_meld(
         turn_counters=TurnCounters.empty(),
     )
     assert_state_invariants(finalized, registry)
+    # No special-achievement predicate can be satisfied by two one-card age-1 stacks, so setup
+    # does not need an achievement boundary check.
     next_decision = current_decision(finalized, registry)
     if next_decision is None:  # pragma: no cover - defensive
         raise EngineInvariantError("finalized setup has no first-turn decision")
@@ -271,24 +274,15 @@ def _claim_normal_achievement(
     state: GameState, action: AchieveAction, registry: CardRegistry
 ) -> Transition:
     assert state.active_player is not None
-    player = state.player(state.active_player)
-    replacement = replace(
-        player,
-        normal_achievements=(*player.normal_achievements, action.achievement_id),
+    spent = replace(
+        state,
+        paid_actions_remaining=state.paid_actions_remaining - 1,
+        next_decision_id=state.next_decision_id + 1,
     )
-    updated = state.replace_player(replacement)
-    updated = replace(
-        updated,
-        paid_actions_remaining=updated.paid_actions_remaining - 1,
-        next_decision_id=updated.next_decision_id + 1,
-    )
-    if replacement.achievement_count >= 6:
-        return _terminal_transition(
-            updated,
-            TerminalState(TerminalReason.ACHIEVEMENT_VICTORY, (state.active_player,)),
-        )
-    assert_state_invariants(updated, registry)
-    return _next_transition(updated, registry)
+    result = claim_normal_achievement(spent, state.active_player, action.achievement_id, registry)
+    if result.terminal is not None:
+        return Transition(result.state, terminal=result.terminal)
+    return _next_transition(result.state, registry)
 
 
 def _start_dogma(state: GameState, action: DogmaAction, registry: CardRegistry) -> Transition:
@@ -347,7 +341,7 @@ def apply_action(
             next_decision_id=updated.next_decision_id + 1,
         )
         if result.beyond_age_ten:
-            return _terminal_transition(updated, _draw_exhaustion_result(updated, registry))
+            return terminal_transition(updated, draw_beyond_age_ten_result(updated, registry))
         return _next_transition(updated, registry)
     if isinstance(action, MeldAction):
         updated, _ = meld_card(state, state.active_player, action.card_id, registry)
@@ -365,7 +359,12 @@ def apply_action(
 
 
 def finish_effect_resolution(state: GameState, registry: CardRegistry | None = None) -> Transition:
-    """Advance after WP4 has completely cleared a paid Dogma action's frames."""
+    """Advance after WP4 has completely cleared a paid Dogma action's frames.
+
+    This runs the achievement boundary check as a defensive final boundary, so a special
+    achievement that became eligible during the dogma action is claimed even if the effect
+    owner did not check it, and a resulting sixth-achievement victory ends the game here.
+    """
 
     registry = registry or load_card_registry()
     if state.phase is not GamePhase.PLAY or state.pending_effects:
