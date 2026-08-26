@@ -1,9 +1,23 @@
 # Project Roadmap
 
-## Milestone 1
+## Long-term aim
+
+Build a strong, reproducible, inspectable Innovation opponent and self-play research platform in
+the spirit of Keldon Jones's 2009 Race for the Galaxy AI project. The project should produce a
+useful playable AI, not only an engine or isolated model experiment. See `PROJECT_GOAL.md`.
+
+## Milestone 1 — complete
 
 Complete the deterministic two-player Innovation base-game engine, all 105 cards, agents,
 runners, replay, and invariant/fuzz coverage as specified in `docs/MILESTONE_1_PLAN.md`.
+
+## Milestone 2 — planned
+
+Deliver the first end-to-end learned baseline: audited random/heuristic agents, a flat
+viewpoint-relative encoder, the `D -> 128 tanh -> 1 sigmoid` PyTorch value network,
+terminal-outcome training from compact replay data, information-safe batched one-ply afterstate
+selection, frozen-checkpoint self-play, paired arena evaluation, and CPU profiling. See
+`docs/MILESTONE_2_PLAN.md`.
 
 ## Future information-memory policy
 

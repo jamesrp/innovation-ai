@@ -2,18 +2,21 @@
 
 ## Project purpose and current milestone
 
-This repository implements **Innovation (base game, Third Edition), two players**. The
-long-term project includes self-play and PyTorch research, but **Milestone 1 is the complete
-deterministic game engine for all 105 supplied cards** plus basic non-ML agents and runners.
+This repository implements **Innovation (base game, Third Edition), two players**, and is building
+toward a strong self-play-trained Innovation AI. **Milestone 1 is complete:** the deterministic
+engine covers all 105 supplied cards, replay, information boundaries, agents, runners, and fuzz
+coverage. **Milestone 2 is the first learned value baseline** described in
+`docs/MILESTONE_2_PLAN.md`.
 
-Read these before changing engine behavior:
+Read these before changing engine or ML behavior:
 
 1. `PROJECT_GOAL.md` — binding architecture and milestone goals.
 2. `game-rules-plaintext/innovation_2p_base_rules.md` — authoritative supplied rules.
 3. `game-rules-plaintext/cards.csv` — authoritative supplied card list and dogma text.
 4. `game-rules-plaintext/special_achievements.csv` — achievement index; where abbreviated
    text differs, the full rules and card text govern.
-5. `docs/MILESTONE_1_PLAN.md` — implementation order, contracts, and handoff boundaries.
+5. `docs/MILESTONE_1_PLAN.md` — completed engine implementation contracts and history.
+6. `docs/MILESTONE_2_PLAN.md` — current ML implementation order, interfaces, and acceptance gates.
 
 Do not silently resolve a rules ambiguity. Record the interpretation and a focused test; if
 it materially changes gameplay or observations, request a project decision first.
@@ -23,7 +26,7 @@ it materially changes gameplay or observations, request a project decision first
 - Python 3.12+
 - `uv` owns dependencies, the lockfile, and command execution.
 - Core engine code uses the standard library and must not import NumPy, PyTorch, or agent code.
-- NumPy and CPU-only PyTorch live in the optional `ai` dependency group for later milestones.
+- NumPy and CPU-only PyTorch live in the optional `ai` dependency group for ML work.
 - The virtual environment is `.venv/` and is never committed.
 - Run commands from the repository root.
 
@@ -61,7 +64,8 @@ Create paths only when their work package begins; avoid empty scaffolding.
 - `src/innovation_ai/innovation/`: Innovation rules, state, card registry, and effects
 - `src/innovation_ai/agents/`: random, scripted, heuristic, and later learned policies
 - `src/innovation_ai/harness/`: game runners, batching, logs, replay, and evaluation
-- `src/innovation_ai/training/`: later ML-only training and self-play code
+- `src/innovation_ai/training/`: ML encoding, models, compact replay, training, inference, and
+  self-play code added by Milestone 2 work packages
 - `tests/`: mirrors package layout; card tests are partitioned to avoid agent conflicts
 - `game-rules-plaintext/`: immutable human-readable source material supplied by the user
 - `docs/`: architecture contracts, rules decisions, and implementation plans
