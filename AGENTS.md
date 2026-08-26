@@ -156,3 +156,5 @@ Create paths only when their work package begins; avoid empty scaffolding.
   checkpoints.
 - Update `AGENTS.md`, `README.md`, and the relevant contract/decision document when commands,
   architecture, or interpretations change.
+- Push completed commits to `origin` before handoff unless the user asks otherwise or the remote
+  is unavailable; report any push failure explicitly.
