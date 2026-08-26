@@ -1,4 +1,4 @@
-.PHONY: install install-ai run test lint format typecheck check clean
+.PHONY: install install-ai run web test lint format typecheck check clean
 
 install:
 	uv sync
@@ -8,6 +8,9 @@ install-ai:
 
 run:
 	uv run innovation-ai doctor
+
+web:
+	uv run innovation-ai web --host 0.0.0.0 --port 8000
 
 test:
 	uv run pytest --cov=innovation_ai --cov-report=term-missing

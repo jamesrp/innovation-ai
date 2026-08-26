@@ -35,6 +35,29 @@ make install-ai    # Also install NumPy and CPU-only PyTorch for later milestone
 make check         # Lint, type-check, and full default test/coverage gate
 INNOVATION_LARGE_FUZZ_SEEDS=100 uv run pytest -q -m fuzz tests/innovation/test_fuzz.py
 make run           # Verify the environment
+make web           # Serve the hot-seat browser QA table on port 8000
+```
+
+## Browser QA table
+
+The Milestone 1 engine includes a deliberately thin, non-production hot-seat UI for manual rules
+verification:
+
+```bash
+make web
+# then open http://localhost:8000
+```
+
+Choose actions for both players from the same browser. The table renders only the current
+chooser's player-safe observation, includes the printed card reference text, supports one-step
+undo by deterministic replay, accepts a new setup seed, and downloads the current replayable game
+log. Games live only in server memory and reset when the process restarts; this is a QA surface,
+not a network multiplayer service.
+
+Direct invocation and custom binding:
+
+```bash
+uv run innovation-ai web --host 0.0.0.0 --port 8000 --seed 0
 ```
 
 Direct equivalents:

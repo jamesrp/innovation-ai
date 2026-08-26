@@ -1,0 +1,17 @@
+[Unit]
+Description=Innovation hot-seat QA web table
+After=network.target
+
+[Service]
+Type=simple
+User=exedev
+WorkingDirectory=/home/exedev/workspace/innovation-ai
+ExecStart=/usr/local/bin/uv run innovation-ai web --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

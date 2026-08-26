@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import logging
 import platform
 import sys
 from collections.abc import Sequence
@@ -77,6 +78,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay = subparsers.add_parser("replay", help="verify and replay a saved game log")
     replay.add_argument("log", type=Path, help="game-log path")
+    web = subparsers.add_parser("web", help="serve the hot-seat browser QA table")
+    web.add_argument("--host", default="127.0.0.1", help="listen address (default: 127.0.0.1)")
+    web.add_argument("--port", type=int, default=8000, help="listen port (default: 8000)")
+    web.add_argument("--seed", type=int, default=0, help="initial deterministic setup seed")
     return parser
 
 
@@ -90,6 +95,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _play(args.seed, args.log, args.max_transitions)
         if args.command == "replay":
             return _replay(args.log)
+        if args.command == "web":
+            if not 1 <= args.port <= 65535:
+                raise ValueError("port must be between 1 and 65535")
+            from innovation_ai.web.server import serve
+
+            logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+            serve(args.host, args.port, args.seed)
+            return 0
     except (GameLogError, ReplayError, OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

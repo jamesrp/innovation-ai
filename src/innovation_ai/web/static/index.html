@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Innovation QA Table</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Milestone 1 · hot-seat QA</p>
+      <h1>Innovation</h1>
+    </div>
+    <div class="toolbar">
+      <label>Seed <input id="seed" type="number" value="0"></label>
+      <button id="new-game" class="secondary">New game</button>
+      <button id="undo" class="secondary">Undo</button>
+      <a id="download" class="button secondary" href="/api/log" title="QA artifact: contains the complete hidden setup">Download log</a>
+    </div>
+  </header>
+
+  <main>
+    <div id="error" class="error hidden" role="alert"></div>
+    <section id="status" class="status-strip" aria-live="polite"></section>
+    <p class="qa-warning">Self-play QA surface: seed, undo, and downloaded logs are omniscient debugging tools, not player-private multiplayer features.</p>
+    <section id="terminal" class="terminal hidden"></section>
+
+    <section class="table-layout">
+      <div id="player-2" class="player-area"></div>
+
+      <aside class="center-column">
+        <section id="decision" class="decision-panel"></section>
+        <section id="supplies" class="supplies panel"></section>
+        <details class="panel history-panel">
+          <summary>Action history</summary>
+          <ol id="history"></ol>
+        </details>
+      </aside>
+
+      <div id="player-1" class="player-area"></div>
+    </section>
+  </main>
+
+  <div id="busy" class="busy hidden" aria-live="assertive">Applying…</div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
