@@ -1,8 +1,10 @@
 # Milestone 2 Plan — First Learned Innovation AI
 
-**Planning status (August 26, 2026):** design only. Milestone 1's deterministic two-player base-game
-engine, 105-card effect registry, replay, invariants, information boundaries, baseline agents, and
-pull runner are complete. No ML implementation is included in this plan change.
+**Implementation status (August 29, 2026): complete.** Milestone 2 now includes the frozen public
+value-position/encoder contracts, value model and immutable checkpoints, compact replay and
+terminal training, information-set determinizations, batched afterstate selection, resumable
+self-play, paired arenas/promotion artifacts, CLI workflows, and CPU profiling. See
+`docs/MILESTONE_2_REPORT.md` for the release evidence and remaining limitations.
 
 ## 1. Milestone outcome
 

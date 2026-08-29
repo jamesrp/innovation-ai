@@ -14,11 +14,15 @@ is strictly separated from player-visible observations. Random, scripted, and si
 agents plus single-game and pull-based multi-game runners establish non-ML baselines and the batch
 orchestration seam.
 
-The next goal is the first learned baseline: a viewpoint-relative flat observation encoder, a small
+The first learned baseline is now complete: a viewpoint-relative flat observation encoder, a small
 PyTorch value network, terminal-outcome training from compact replay data, information-safe
-one-ply afterstate selection, frozen-checkpoint iterative self-play, and statistically grounded
-arena evaluation. It must run usefully on a CPU-only exe.dev development box while retaining clean
-paths to parallel actors and GPU-backed training or inference.
+one-ply afterstate selection, frozen-checkpoint iterative self-play, paired arena evaluation, and
+CPU profiling. The implementation runs on the CPU-only exe.dev development box and preserves
+clean paths to parallel actors and GPU-backed training or inference.
+
+The next goal is to scale and strengthen that reproducible pipeline: increase self-play volume,
+tune the value baseline, introduce bounded parallel actors, and use paired arenas to decide which
+changes improve play before pursuing richer memory, belief, or search methods.
 
 Preserve the engine as an explicit state machine. Every player choice remains a semantic
 `Decision`, and applying one semantic `Action` advances to the next decision or terminal result.

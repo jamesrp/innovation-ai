@@ -3,10 +3,11 @@
 ## Project purpose and current milestone
 
 This repository implements **Innovation (base game, Third Edition), two players**, and is building
-toward a strong self-play-trained Innovation AI. **Milestone 1 is complete:** the deterministic
-engine covers all 105 supplied cards, replay, information boundaries, agents, runners, and fuzz
-coverage. **Milestone 2 is the first learned value baseline** described in
-`docs/MILESTONE_2_PLAN.md`.
+toward a strong self-play-trained Innovation AI. **Milestones 1 and 2 are complete:** the
+deterministic engine covers all 105 supplied cards, and the first learned-value pipeline includes
+encoder v1, compact replay training, information-safe afterstates, frozen self-play, paired arenas,
+and CPU profiling. Future work should scale and strengthen this baseline without weakening its
+information or reproducibility contracts.
 
 Read these before changing engine or ML behavior:
 
@@ -16,7 +17,8 @@ Read these before changing engine or ML behavior:
 4. `game-rules-plaintext/special_achievements.csv` — achievement index; where abbreviated
    text differs, the full rules and card text govern.
 5. `docs/MILESTONE_1_PLAN.md` — completed engine implementation contracts and history.
-6. `docs/MILESTONE_2_PLAN.md` — current ML implementation order, interfaces, and acceptance gates.
+6. `docs/MILESTONE_2_PLAN.md` — completed first learned-value milestone contracts and gates.
+7. `docs/MILESTONE_2_REPORT.md` — implementation evidence, commands, profiling, and limitations.
 
 Do not silently resolve a rules ambiguity. Record the interpretation and a focused test; if
 it materially changes gameplay or observations, request a project decision first.
