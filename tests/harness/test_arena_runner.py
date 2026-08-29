@@ -62,6 +62,15 @@ def test_executor_runs_exact_swapped_games_deterministically() -> None:
     assert first.report.by_opponent[0].opponent_policy_id == "random"
 
 
+def test_policy_routing_uses_each_planned_game_candidate_seat() -> None:
+    pair = plan_match_pair("seat-routing", 44, "candidate", "opponent")
+
+    assert ArenaRunner._policy_for(pair, pair.games[0], PlayerId.PLAYER_1) == "candidate"
+    assert ArenaRunner._policy_for(pair, pair.games[0], PlayerId.PLAYER_2) == "opponent"
+    assert ArenaRunner._policy_for(pair, pair.games[1], PlayerId.PLAYER_1) == "opponent"
+    assert ArenaRunner._policy_for(pair, pair.games[1], PlayerId.PLAYER_2) == "candidate"
+
+
 def _promotion_report(*, lower: float) -> tuple[PolicyDescriptor, ArenaManifest, ArenaReport]:
     candidate = PolicyDescriptor("candidate", "learned", "candidate-checkpoint")
     incumbent = PolicyDescriptor("incumbent", "learned", "incumbent-checkpoint")
@@ -87,14 +96,17 @@ def _promotion_report(*, lower: float) -> tuple[PolicyDescriptor, ArenaManifest,
         for planned in pair.games
     )
     report = build_arena_report(manifest, ArenaResult.for_manifest(manifest, games))
-    report = replace(
-        report,
-        all_pairs=replace(
-            report.all_pairs,
-            confidence_interval=replace(report.all_pairs.confidence_interval, lower=lower),
+    return (
+        candidate,
+        manifest,
+        replace(
+            report,
+            all_pairs=replace(
+                report.all_pairs,
+                confidence_interval=replace(report.all_pairs.confidence_interval, lower=lower),
+            ),
         ),
     )
-    return candidate, manifest, report
 
 
 def test_promotion_bootstraps_then_requires_fixed_complete_arena_and_strict_lower_bound(

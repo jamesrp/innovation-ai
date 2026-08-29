@@ -26,6 +26,7 @@ from innovation_ai.harness.arena import (
     ArenaResult,
     ArenaSchemaError,
     MatchPair,
+    PlannedGame,
     arena_game_result_from_record,
     build_arena_report,
     dumps_arena_report,
@@ -38,7 +39,6 @@ from innovation_ai.harness.arena import (
 from innovation_ai.harness.engine import RunnerEngine
 from innovation_ai.harness.records import RunnerRecording
 from innovation_ai.harness.runner import GameBlockedError, GameSpec, PullGameRunner, Submission
-from innovation_ai.innovation.actions import DecisionKind
 from innovation_ai.innovation.serialization import JsonValue, canonical_json, parse_json
 from innovation_ai.innovation.state import GameState
 from innovation_ai.innovation.types import PlayerId
@@ -128,20 +128,6 @@ class PromotionOutcome:
     lower_bound: float | None
 
 
-class _PendingView:
-    """Read-only filtered runner façade consumed by ``PolicyScheduler.schedule``."""
-
-    def __init__(self, runner: PullGameRunner[GameState], pending: tuple[object, ...]) -> None:
-        self._runner = runner
-        self._pending = pending
-
-    def pending(self) -> tuple[object, ...]:
-        return self._pending
-
-    def state(self, game_id: str) -> GameState:
-        return self._runner.state(game_id)
-
-
 BaselineFactory = Callable[[int], Agent]
 
 
@@ -200,8 +186,10 @@ class ArenaRunner:
 
         if manifest.temperature != 0.0:
             raise ArenaExecutionError("arena execution requires deterministic temperature zero")
-        pair_by_game = {
-            planned.game_id: pair for pair in manifest.match_pairs for planned in pair.games
+        plan_by_game = {
+            planned.game_id: (pair, planned)
+            for pair in manifest.match_pairs
+            for planned in pair.games
         }
         for policy_id in {manifest.candidate_policy_id} | {
             pair.opponent_policy_id for pair in manifest.match_pairs
@@ -211,10 +199,50 @@ class ArenaRunner:
             if descriptor.temperature != 0.0:
                 raise ArenaExecutionError(f"learned policy {policy_id!r} is not temperature zero")
 
-        specs = tuple(GameSpec(game_id, pair.setup_seed) for game_id, pair in pair_by_game.items())
+        specs = tuple(
+            GameSpec(game_id, pair.setup_seed) for game_id, (pair, _) in plan_by_game.items()
+        )
         runner = PullGameRunner(self._engine, specs, recording=RunnerRecording())
         baselines: dict[tuple[str, PlayerId], Agent] = {}
-        submitted_actions = {game_id: 0 for game_id in pair_by_game}
+        submitted_actions = {game_id: 0 for game_id in plan_by_game}
+        scheduler = None
+        if self._learned:
+            from innovation_ai.harness.policy_scheduler import (
+                LearnedPolicyAssignment,
+                PolicyAssignmentKey,
+                PolicyScheduler,
+            )
+
+            assignments: dict[PolicyAssignmentKey, LearnedPolicyAssignment] = {}
+            evaluators = {}
+            fallback_agents: dict[tuple[str, PlayerId], Agent] = {}
+            for game_id, (pair, planned) in plan_by_game.items():
+                for seat in PlayerId:
+                    policy_id = self._policy_for(pair, planned, seat)
+                    if self._is_learned(policy_id):
+                        descriptor = self._learned[policy_id]
+                        key = descriptor.policy_id
+                        assignments[(game_id, seat)] = LearnedPolicyAssignment(descriptor, key)
+                        assert self._cache is not None
+                        evaluators[key] = self._cache.evaluator_for(descriptor)
+                    else:
+                        fallback_agents[(game_id, seat)] = self._baseline_agent(
+                            policy_id, pair, seat
+                        )
+            scheduler = PolicyScheduler(
+                assignments,
+                evaluators,
+                fallback_agents=fallback_agents,
+                run_seed=self._run_seed,
+                generation=self._generation,
+            )
+        else:
+            for game_id, (pair, planned) in plan_by_game.items():
+                for seat in PlayerId:
+                    policy_id = self._policy_for(pair, planned, seat)
+                    baselines[(game_id, seat)] = self._baseline_agent(policy_id, pair, seat)
+
+        submitted_actions = {game_id: 0 for game_id in plan_by_game}
         while True:
             pending = runner.pending()
             if not pending:
@@ -232,47 +260,18 @@ class ArenaRunner:
                     f"game {game_id!r} exceeded action ceiling {self._max_actions}"
                 )
 
-            learned_pending = tuple(
-                item
-                for item in pending
-                if self._is_learned(
-                    self._policy_for(pair_by_game[item.game_id], item.decision.chooser)
-                )
-                and item.decision.kind is DecisionKind.TURN_ACTION
-            )
-            submissions: list[Submission] = []
-            if learned_pending:
-                from innovation_ai.harness.policy_scheduler import (
-                    LearnedPolicyAssignment,
-                    PolicyScheduler,
-                )
-
-                assignments: dict[str, LearnedPolicyAssignment] = {}
-                evaluators = {}
-                for item in learned_pending:
-                    policy_id = self._policy_for(pair_by_game[item.game_id], item.decision.chooser)
-                    descriptor = self._learned[policy_id]
-                    key = descriptor.policy_id
-                    assignments[item.game_id] = LearnedPolicyAssignment(descriptor, key)
-                    assert self._cache is not None
-                    evaluators[key] = self._cache.evaluator_for(descriptor)
-                schedule = PolicyScheduler(
-                    assignments, evaluators, run_seed=self._run_seed, generation=self._generation
-                ).schedule(cast(PullGameRunner[GameState], _PendingView(runner, learned_pending)))
-                submissions.extend(schedule.submissions)
-
-            learned_keys = {(item.game_id, item.decision.decision_id) for item in learned_pending}
-            for item in pending:
-                if (item.game_id, item.decision.decision_id) in learned_keys:
-                    continue
-                policy_id = self._policy_for(pair_by_game[item.game_id], item.decision.chooser)
-                agent = baselines.setdefault(
-                    (item.game_id, item.decision.chooser),
-                    self._baseline_agent(
-                        policy_id, pair_by_game[item.game_id], item.decision.chooser
-                    ),
-                )
-                submissions.append(Submission(item.game_id, agent.choose_action(item.decision)))
+            if scheduler is not None:
+                submissions = list(scheduler.schedule(runner).submissions)
+            else:
+                submissions = [
+                    Submission(
+                        item.game_id,
+                        baselines[(item.game_id, item.decision.chooser)].choose_action(
+                            item.decision
+                        ),
+                    )
+                    for item in pending
+                ]
             if len(submissions) != len(pending):
                 raise ArenaExecutionError(
                     "arena policy routing did not answer every pending decision"
@@ -304,11 +303,11 @@ class ArenaRunner:
         return policy_id in self._learned
 
     @staticmethod
-    def _policy_for(pair: MatchPair, seat: PlayerId) -> str:
+    def _policy_for(pair: MatchPair, planned: PlannedGame, seat: PlayerId) -> str:
+        """Route a physical seat against the candidate seat of this exact planned game."""
+
         return (
-            pair.candidate_policy_id
-            if seat is pair.games[0].candidate_seat
-            else pair.opponent_policy_id
+            pair.candidate_policy_id if seat is planned.candidate_seat else pair.opponent_policy_id
         )
 
     def _baseline_agent(self, policy_id: str, pair: MatchPair, seat: PlayerId) -> Agent:
