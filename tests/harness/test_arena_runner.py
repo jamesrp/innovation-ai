@@ -20,6 +20,7 @@ from innovation_ai.harness.arena import (
 )
 from innovation_ai.harness.arena_runner import (
     PROMOTION_PAIR_COUNT,
+    ArenaActionLimitError,
     ArenaExecutionError,
     ArenaRunner,
     ChampionManifest,
@@ -60,6 +61,32 @@ def test_executor_runs_exact_swapped_games_deterministically() -> None:
     assert tuple(game.game_id for game in first.result.games) == manifest.match_pairs[0].game_ids
     assert tuple(game.candidate_seat for game in first.result.games) == tuple(PlayerId)
     assert first.report.by_opponent[0].opponent_policy_id == "random"
+
+
+def test_action_ceiling_retains_reproducible_diagnostic() -> None:
+    manifest = _baseline_manifest()
+    runner = ArenaRunner(
+        InnovationEngineAdapter(),
+        {
+            "heuristic": PolicyDescriptor("heuristic", "heuristic"),
+            "random": PolicyDescriptor("random", "random"),
+        },
+        max_actions=2,
+    )
+
+    with pytest.raises(ArenaActionLimitError) as caught:
+        runner.execute(manifest)
+
+    diagnostic = caught.value.diagnostic
+    assert diagnostic["format"] == "innovation-ai-arena-action-ceiling-failure"
+    assert diagnostic["game_id"] == manifest.match_pairs[0].games[0].game_id
+    assert diagnostic["setup_seed"] == manifest.match_pairs[0].setup_seed
+    assert diagnostic["action_count"] == 2
+    assert diagnostic["action_ceiling"] == 2
+    assert str(diagnostic["current_state_hash"]).startswith("sha256:")
+    action_tail = diagnostic["action_tail"]
+    assert isinstance(action_tail, list)
+    assert len(action_tail) == 2
 
 
 def test_policy_routing_uses_each_planned_game_candidate_seat() -> None:

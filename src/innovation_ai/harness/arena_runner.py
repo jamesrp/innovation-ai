@@ -39,8 +39,9 @@ from innovation_ai.harness.arena import (
 from innovation_ai.harness.engine import RunnerEngine
 from innovation_ai.harness.records import RunnerRecording
 from innovation_ai.harness.runner import GameBlockedError, GameSpec, PullGameRunner, Submission
+from innovation_ai.innovation.actions import action_payload
 from innovation_ai.innovation.serialization import JsonValue, canonical_json, parse_json
-from innovation_ai.innovation.state import GameState
+from innovation_ai.innovation.state import GameState, state_hash
 from innovation_ai.innovation.types import PlayerId
 
 if TYPE_CHECKING:
@@ -59,6 +60,13 @@ class ArenaExecutionError(RuntimeError):
 
 class ArenaActionLimitError(ArenaExecutionError):
     """A planned game crossed the executor's defensive action ceiling."""
+
+    def __init__(self, diagnostic: Mapping[str, object]) -> None:
+        self.diagnostic = dict(diagnostic)
+        super().__init__(
+            f"game {self.diagnostic['game_id']!r} exceeded action ceiling "
+            f"{self.diagnostic['action_ceiling']}"
+        )
 
 
 class PromotionDecision(StrEnum):
@@ -243,6 +251,7 @@ class ArenaRunner:
                     baselines[(game_id, seat)] = self._baseline_agent(policy_id, pair, seat)
 
         submitted_actions = {game_id: 0 for game_id in plan_by_game}
+        action_tails: dict[str, list[dict[str, object]]] = {game_id: [] for game_id in plan_by_game}
         while True:
             pending = runner.pending()
             if not pending:
@@ -256,8 +265,23 @@ class ArenaRunner:
                     for item in pending
                     if submitted_actions[item.game_id] >= self._max_actions
                 )
+                pair, planned = plan_by_game[game_id]
                 raise ArenaActionLimitError(
-                    f"game {game_id!r} exceeded action ceiling {self._max_actions}"
+                    {
+                        "format": "innovation-ai-arena-action-ceiling-failure",
+                        "schema_version": 1,
+                        "arena_id": manifest.arena_id,
+                        "pair_id": pair.pair_id,
+                        "game_id": game_id,
+                        "setup_seed": pair.setup_seed,
+                        "candidate_policy_id": pair.candidate_policy_id,
+                        "opponent_policy_id": pair.opponent_policy_id,
+                        "candidate_seat": planned.candidate_seat.value,
+                        "action_count": submitted_actions[game_id],
+                        "action_ceiling": self._max_actions,
+                        "current_state_hash": state_hash(runner.state(game_id)),
+                        "action_tail": action_tails[game_id],
+                    }
                 )
 
             if scheduler is not None:
@@ -279,6 +303,14 @@ class ArenaRunner:
             runner.submit(submissions)
             for submission in submissions:
                 submitted_actions[submission.game_id] += 1
+                action_tails[submission.game_id].append(
+                    {
+                        "sequence": submitted_actions[submission.game_id],
+                        "action": action_payload(submission.action),
+                        "resulting_state_hash": state_hash(runner.state(submission.game_id)),
+                    }
+                )
+                action_tails[submission.game_id] = action_tails[submission.game_id][-32:]
 
         games: list[ArenaGameResult] = []
         for pair in manifest.match_pairs:
@@ -466,10 +498,14 @@ def loads_champion_pointer(text: str) -> ChampionPointer:
 
 
 def write_execution_artifacts(directory: str | Path, execution: ArenaExecution) -> None:
-    """Atomically publish only canonical result/report JSON under ``directory``."""
+    """Atomically publish immutable canonical result/report JSON under ``directory``."""
     root = Path(directory)
-    _atomic_write(root / "arena-result.json", dumps_arena_result(execution.result).encode("ascii"))
-    _atomic_write(root / "arena-report.json", dumps_arena_report(execution.report).encode("ascii"))
+    _atomic_write_immutable(
+        root / "arena-result.json", dumps_arena_result(execution.result).encode("ascii")
+    )
+    _atomic_write_immutable(
+        root / "arena-report.json", dumps_arena_report(execution.report).encode("ascii")
+    )
 
 
 def write_champion(directory: str | Path, champion: ChampionManifest) -> ChampionPointer:
@@ -481,6 +517,14 @@ def write_champion(directory: str | Path, champion: ChampionManifest) -> Champio
     pointer = ChampionPointer(digest, champion.policy_id, champion.checkpoint_id)
     _atomic_write(root / "champion.json", dumps_champion_pointer(pointer).encode("ascii"))
     return pointer
+
+
+def _atomic_write_immutable(path: Path, data: bytes) -> None:
+    if path.exists():
+        if path.read_bytes() != data:
+            raise ArenaExecutionError(f"existing immutable arena artifact differs: {path}")
+        return
+    _atomic_write(path, data)
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

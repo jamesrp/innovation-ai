@@ -135,6 +135,16 @@ class EpochRecord:
     def payload(self) -> dict[str, object]:
         return asdict(self)
 
+    def immutable_payload(self) -> dict[str, object]:
+        """Return the checkpoint-safe epoch metrics without wall-clock throughput."""
+
+        return {
+            "epoch": self.epoch,
+            "train_bce": self.train_bce,
+            "validation_bce": self.validation_bce,
+            "validation_brier": self.validation_brier,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class LoadedTrainingDataset:
@@ -177,6 +187,26 @@ class TrainingReport:
             "stopped_early": self.stopped_early,
             "examples_per_second": self.examples_per_second,
             "epoch_history": [record.payload() for record in self.epoch_history],
+        }
+
+    def immutable_payload(self) -> dict[str, object]:
+        """Return checkpoint metrics that exclude volatile wall-clock throughput.
+
+        ``examples_per_second`` remains in :meth:`payload` for live callers, but
+        wall-clock timing must not alter an immutable checkpoint's bytes or ID.
+        """
+
+        return {
+            "dataset_id": self.dataset_id,
+            "training_config": self.config.payload(),
+            "train": self.train.payload(),
+            "validation": self.validation.payload(),
+            "held_out_episode_count": self.held_out_episode_count,
+            "held_out_game_count": self.held_out_game_count,
+            "best_epoch": self.best_epoch,
+            "epochs_completed": self.epochs_completed,
+            "stopped_early": self.stopped_early,
+            "epoch_history": [record.immutable_payload() for record in self.epoch_history],
         }
 
 
@@ -355,7 +385,7 @@ def train_terminal_outcomes(
         model,
         resolved_encoder,
         optimizer=optimizer,
-        metrics=report.payload(),
+        metrics=report.immutable_payload(),
         training_dataset_ids=(data.dataset_id,),
         parent_checkpoint_ids=tuple(parent_checkpoint_ids),
         generation=generation,

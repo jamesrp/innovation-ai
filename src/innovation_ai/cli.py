@@ -7,10 +7,13 @@ import importlib.util
 import json
 import logging
 import platform
+import resource
 import sys
+import time
 import tomllib
 from collections.abc import Sequence
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -311,8 +314,58 @@ def _balanced_split_salt(source_paths: tuple[Path, ...], validation_fraction: fl
     raise ValueError("could not derive a nonempty deterministic train/validation split")
 
 
+def _write_canonical_json(path: Path, payload: dict[str, object], *, immutable: bool) -> None:
+    """Write canonical JSON atomically, optionally rejecting an incompatible prior artifact."""
+
+    text = (
+        json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        )
+        + "\n"
+    )
+    if immutable and path.exists():
+        if path.read_text(encoding="utf-8") != text:
+            raise ValueError(f"existing immutable artifact differs: {path}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)
+
+
+def _iteration_state(root: Path, config_digest: str) -> dict[str, object]:
+    path = root / "iteration-state.json"
+    if not path.exists():
+        return {
+            "format": "innovation-ai-iteration-state",
+            "schema_version": 1,
+            "config_digest": config_digest,
+        }
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(value, dict)
+        or value.get("format") != "innovation-ai-iteration-state"
+        or value.get("schema_version") != 1
+        or value.get("config_digest") != config_digest
+    ):
+        raise ValueError("iteration state is incompatible with the resolved configuration")
+    return value
+
+
+def _save_iteration_state(root: Path, state: dict[str, object]) -> None:
+    _write_canonical_json(root / "iteration-state.json", state, immutable=False)
+
+
+def _write_stage_telemetry(path: Path, payload: dict[str, object]) -> None:
+    """Preserve first-run live telemetry without changing content-addressed model artifacts."""
+
+    if path.exists():
+        return
+    _write_canonical_json(path, payload, immutable=True)
+
+
 def _iterate(args: argparse.Namespace) -> int:
-    """Run a complete bootstrap, train, learned-self-play, and candidate-train iteration."""
+    """Run or resume bootstrap, training, learned self-play, and candidate training."""
 
     from innovation_ai.agents.descriptors import (
         RANDOM_AGENT_DESCRIPTOR,
@@ -321,8 +374,11 @@ def _iterate(args: argparse.Namespace) -> int:
     from innovation_ai.training.checkpoint import (
         PolicyDescriptor,
         load_checkpoint_manifest,
+        load_policy_descriptor,
     )
+    from innovation_ai.training.compact_replay import read_compact_replay_shard
     from innovation_ai.training.dataset import materialize_dataset
+    from innovation_ai.training.experiment_report import write_experiment_report
     from innovation_ai.training.optimize import TrainingConfig, train_terminal_outcomes
     from innovation_ai.training.self_play import (
         GenerationConfig,
@@ -343,14 +399,42 @@ def _iterate(args: argparse.Namespace) -> int:
     learned_games = int(config_data.get("learned_games", args.learned_games))
     games_in_flight = int(config_data.get("games_in_flight", args.games_in_flight))
     shard_size = int(config_data.get("shard_size", args.shard_size))
+    max_actions = int(config_data.get("max_actions", args.max_actions))
     validation_fraction = float(config_data.get("validation_fraction", args.validation_fraction))
+    temperature = float(config_data.get("temperature", args.temperature))
+    determinizations = int(config_data.get("determinizations", args.determinizations))
     train_config = TrainingConfig(
         seed=seed,
         max_epochs=int(config_data.get("epochs", args.epochs)),
         patience=int(config_data.get("patience", args.patience)),
         batch_size=int(config_data.get("batch_size", args.batch_size)),
+        learning_rate=float(config_data.get("learning_rate", 1e-3)),
+        weight_decay=float(config_data.get("weight_decay", 1e-5)),
         torch_num_threads=int(config_data.get("torch_threads", args.torch_threads)),
     )
+    resolved_config: dict[str, object] = {
+        "format": "innovation-ai-iterate-config",
+        "schema_version": 1,
+        "run_id": root.name,
+        "seed": seed,
+        "bootstrap_games": bootstrap_games,
+        "learned_games": learned_games,
+        "games_in_flight": games_in_flight,
+        "shard_size": shard_size,
+        "max_actions": max_actions,
+        "validation_fraction": validation_fraction,
+        "temperature": temperature,
+        "determinizations": determinizations,
+        "training": train_config.payload(),
+    }
+    config_text = json.dumps(
+        resolved_config, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
+    config_digest = "sha256:" + sha256(config_text.encode("ascii")).hexdigest()
+    resolved_config["config_digest"] = config_digest
+    _write_canonical_json(root / "resolved-config.json", resolved_config, immutable=True)
+    state = _iteration_state(root, config_digest)
+
     checkpoint_root = root / "checkpoints"
     policy_root = root / "policies"
     policy_root.mkdir(exist_ok=True)
@@ -372,7 +456,7 @@ def _iterate(args: argparse.Namespace) -> int:
             0,
             max_games_in_flight=games_in_flight,
             shard_episode_limit=shard_size,
-            action_ceiling=args.max_actions,
+            action_ceiling=max_actions,
         ),
         (heuristic, random),
         (
@@ -382,8 +466,27 @@ def _iterate(args: argparse.Namespace) -> int:
         bootstrap_games,
     )
     bootstrap_dir = root / "bootstrap"
+    started = time.perf_counter()
     run_generation(bootstrap_dir, bootstrap_manifest)
+    elapsed = time.perf_counter() - started
     bootstrap_sources = _replay_sources(bootstrap_dir)
+    bootstrap_episodes = tuple(
+        episode
+        for source in bootstrap_sources
+        for episode in read_compact_replay_shard(source, verify=True)
+    )
+    bootstrap_actions = sum(episode.transition_count for episode in bootstrap_episodes)
+    _write_stage_telemetry(
+        bootstrap_dir / "generation-telemetry.json",
+        {
+            "elapsed_seconds": elapsed,
+            "actions": bootstrap_actions,
+            "actions_per_second": bootstrap_actions / elapsed,
+            "sampler_failures": 0,
+            "action_ceiling_failures": 0,
+            "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        },
+    )
     bootstrap_dataset_dir = bootstrap_dir / "dataset"
     bootstrap_dataset = materialize_dataset(
         bootstrap_sources,
@@ -391,20 +494,41 @@ def _iterate(args: argparse.Namespace) -> int:
         validation_fraction=validation_fraction,
         split_salt=_balanced_split_salt(bootstrap_sources, validation_fraction),
     )
-    first = train_terminal_outcomes(
-        bootstrap_dataset_dir / "manifest.json",
-        checkpoint_root,
-        config=train_config,
-        generation=0,
-        creation_command="innovation-ai iterate bootstrap",
-    )
-    first_manifest = load_checkpoint_manifest(first.checkpoint_directory)
-    first_policy = PolicyDescriptor.from_checkpoint(
-        first_manifest,
-        temperature=args.temperature,
-        determinization_count=args.determinizations,
-    )
-    first_policy.save(policy_root / f"{first_policy.policy_id}.json")
+
+    bootstrap_policy_id = state.get("bootstrap_policy_id")
+    bootstrap_checkpoint_id = state.get("bootstrap_checkpoint_id")
+    if isinstance(bootstrap_policy_id, str) and isinstance(bootstrap_checkpoint_id, str):
+        first_policy = load_policy_descriptor(policy_root / f"{bootstrap_policy_id}.json")
+        first_manifest = load_checkpoint_manifest(checkpoint_root / bootstrap_checkpoint_id)
+        if first_policy.checkpoint_id != first_manifest.checkpoint_id:
+            raise ValueError("bootstrap policy and checkpoint state differ")
+    else:
+        first = train_terminal_outcomes(
+            bootstrap_dataset_dir / "manifest.json",
+            checkpoint_root,
+            config=train_config,
+            generation=0,
+            creation_command="innovation-ai iterate bootstrap",
+        )
+        first_manifest = load_checkpoint_manifest(first.checkpoint_directory)
+        first_policy = PolicyDescriptor.from_checkpoint(
+            first_manifest,
+            temperature=temperature,
+            determinization_count=determinizations,
+        )
+        first_policy.save(policy_root / f"{first_policy.policy_id}.json")
+        _write_stage_telemetry(
+            bootstrap_dir / "training-telemetry.json",
+            {
+                "examples_per_second": first.report.examples_per_second,
+                "epoch_examples_per_second": [
+                    record.examples_per_second for record in first.report.epoch_history
+                ],
+            },
+        )
+        state["bootstrap_checkpoint_id"] = first_manifest.checkpoint_id
+        state["bootstrap_policy_id"] = first_policy.policy_id
+        _save_iteration_state(root, state)
 
     learned_seat = SeatPolicy(first_policy.policy_id, "learned", learned=first_policy)
     learned_manifest = plan_generation(
@@ -414,15 +538,34 @@ def _iterate(args: argparse.Namespace) -> int:
             1,
             max_games_in_flight=games_in_flight,
             shard_episode_limit=shard_size,
-            action_ceiling=args.max_actions,
+            action_ceiling=max_actions,
         ),
         (learned_seat,),
         ((learned_seat.policy_id, learned_seat.policy_id),),
         learned_games,
     )
     learned_dir = root / "learned"
+    started = time.perf_counter()
     run_generation(learned_dir, learned_manifest, checkpoint_root=checkpoint_root)
+    elapsed = time.perf_counter() - started
     learned_sources = _replay_sources(learned_dir)
+    learned_episodes = tuple(
+        episode
+        for source in learned_sources
+        for episode in read_compact_replay_shard(source, verify=True)
+    )
+    learned_actions = sum(episode.transition_count for episode in learned_episodes)
+    _write_stage_telemetry(
+        learned_dir / "generation-telemetry.json",
+        {
+            "elapsed_seconds": elapsed,
+            "actions": learned_actions,
+            "actions_per_second": learned_actions / elapsed,
+            "sampler_failures": 0,
+            "action_ceiling_failures": 0,
+            "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        },
+    )
     learned_dataset_dir = learned_dir / "dataset"
     learned_dataset = materialize_dataset(
         learned_sources,
@@ -430,33 +573,63 @@ def _iterate(args: argparse.Namespace) -> int:
         validation_fraction=validation_fraction,
         split_salt=_balanced_split_salt(learned_sources, validation_fraction),
     )
-    candidate = train_terminal_outcomes(
-        learned_dataset_dir / "manifest.json",
-        checkpoint_root,
-        config=replace(train_config, seed=seed + 1),
-        parent_checkpoint_ids=(first_manifest.checkpoint_id,),
-        generation=1,
-        creation_command="innovation-ai iterate candidate",
+
+    candidate_policy_id = state.get("candidate_policy_id")
+    candidate_checkpoint_id = state.get("candidate_checkpoint_id")
+    if isinstance(candidate_policy_id, str) and isinstance(candidate_checkpoint_id, str):
+        candidate_policy = load_policy_descriptor(policy_root / f"{candidate_policy_id}.json")
+        candidate_manifest = load_checkpoint_manifest(checkpoint_root / candidate_checkpoint_id)
+        if candidate_policy.checkpoint_id != candidate_manifest.checkpoint_id:
+            raise ValueError("candidate policy and checkpoint state differ")
+    else:
+        candidate = train_terminal_outcomes(
+            learned_dataset_dir / "manifest.json",
+            checkpoint_root,
+            config=replace(train_config, seed=seed + 1),
+            parent_checkpoint_ids=(first_manifest.checkpoint_id,),
+            generation=1,
+            creation_command="innovation-ai iterate candidate",
+        )
+        candidate_manifest = load_checkpoint_manifest(candidate.checkpoint_directory)
+        candidate_policy = PolicyDescriptor.from_checkpoint(
+            candidate_manifest,
+            temperature=temperature,
+            determinization_count=determinizations,
+        )
+        candidate_policy.save(policy_root / f"{candidate_policy.policy_id}.json")
+        _write_stage_telemetry(
+            learned_dir / "training-telemetry.json",
+            {
+                "examples_per_second": candidate.report.examples_per_second,
+                "epoch_examples_per_second": [
+                    record.examples_per_second for record in candidate.report.epoch_history
+                ],
+            },
+        )
+        state["candidate_checkpoint_id"] = candidate_manifest.checkpoint_id
+        state["candidate_policy_id"] = candidate_policy.policy_id
+        _save_iteration_state(root, state)
+
+    report = write_experiment_report(
+        root,
+        json_name="iteration-summary.json",
+        markdown_name="iteration-summary.md",
     )
-    candidate_manifest = load_checkpoint_manifest(candidate.checkpoint_directory)
-    candidate_policy = PolicyDescriptor.from_checkpoint(
-        candidate_manifest,
-        temperature=args.temperature,
-        determinization_count=args.determinizations,
-    )
-    candidate_policy.save(policy_root / f"{candidate_policy.policy_id}.json")
-    summary = {
-        "bootstrap_dataset": bootstrap_dataset.counts.example_count,
-        "learned_dataset": learned_dataset.counts.example_count,
+    summary = report.payload
+    summary["bootstrap_dataset_examples"] = bootstrap_dataset.counts.example_count
+    summary["learned_dataset_examples"] = learned_dataset.counts.example_count
+    summary["bootstrap_policy_id"] = first_policy.policy_id
+    summary["candidate_policy_id"] = candidate_policy.policy_id
+    summary["candidate_checkpoint_id"] = candidate_manifest.checkpoint_id
+    _write_canonical_json(root / "iteration-summary.json", summary, immutable=False)
+    concise = {
+        "bootstrap_examples": bootstrap_dataset.counts.example_count,
+        "learned_examples": learned_dataset.counts.example_count,
         "bootstrap_policy_id": first_policy.policy_id,
         "candidate_policy_id": candidate_policy.policy_id,
         "candidate_checkpoint_id": candidate_manifest.checkpoint_id,
     }
-    (root / "iteration-summary.json").write_text(
-        json.dumps(summary, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
-    print(json.dumps(summary, sort_keys=True))
+    print(json.dumps(concise, sort_keys=True))
     return 0
 
 
@@ -480,6 +653,7 @@ def _arena(args: argparse.Namespace) -> int:
         PolicyDescriptor as ArenaPolicyDescriptor,
     )
     from innovation_ai.harness.arena_runner import (
+        ArenaActionLimitError,
         ArenaRunner,
         loads_champion_manifest,
         loads_champion_pointer,
@@ -552,19 +726,42 @@ def _arena(args: argparse.Namespace) -> int:
     resolved_policy_dir.mkdir(exist_ok=True)
     for descriptor in learned.values():
         descriptor.save(resolved_policy_dir / f"{descriptor.policy_id}.json")
-    (args.output / "arena-manifest.json").write_text(
-        f"{dumps_arena_manifest(manifest)}\n", encoding="utf-8"
+    (args.output / "arena-manifest.json").parent.mkdir(parents=True, exist_ok=True)
+    _write_canonical_json(
+        args.output / "arena-manifest.json",
+        json.loads(dumps_arena_manifest(manifest)),
+        immutable=True,
     )
     cache = FrozenEvaluatorCache(args.checkpoint_root)
-    execution = ArenaRunner(
+    runner = ArenaRunner(
         InnovationEngineAdapter(),
         policies,
         learned_policies=learned,
         evaluator_cache=cache,
         max_actions=args.max_actions,
         run_seed=args.seed_start,
-    ).execute(manifest)
+    )
+    started = time.perf_counter()
+    try:
+        execution = runner.execute(manifest)
+    except ArenaActionLimitError as error:
+        _write_canonical_json(args.output / "arena-failure.json", error.diagnostic, immutable=True)
+        raise
+    elapsed = time.perf_counter() - started
     write_execution_artifacts(args.output, execution)
+    total_actions = sum(game.game_length for game in execution.result.games)
+    _write_stage_telemetry(
+        args.output / "arena-telemetry.json",
+        {
+            "completed_games": len(execution.result.games),
+            "actions": total_actions,
+            "elapsed_seconds": elapsed,
+            "actions_per_second": total_actions / elapsed,
+            "sampler_failures": 0,
+            "action_ceiling_failures": 0,
+            "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        },
+    )
     table = render_arena_report_table(execution.report)
     (args.output / "arena-report.md").write_text(table, encoding="utf-8")
     if args.promote:
@@ -580,6 +777,15 @@ def _arena(args: argparse.Namespace) -> int:
         if outcome.decision.value != "retained":
             write_champion(args.champion_dir, outcome.champion)
         print(f"promotion: {outcome.decision.value}")
+    if (args.output.parent / "iteration-state.json").is_file():
+        from innovation_ai.training.experiment_report import write_experiment_report
+
+        write_experiment_report(
+            args.output.parent,
+            arena_report_path=args.output / "arena-report.json",
+            json_name="iteration-summary.json",
+            markdown_name="iteration-summary.md",
+        )
     print(table, end="")
     return 0
 

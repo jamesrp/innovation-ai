@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -97,6 +99,25 @@ def _config() -> TrainingConfig:
     )
 
 
+def _bundle_bytes(directory: Path) -> dict[Path, bytes]:
+    return {
+        path.relative_to(directory): path.read_bytes()
+        for path in sorted(directory.iterdir())
+        if path.is_file()
+    }
+
+
+def _perf_counter_with_epoch_duration(epoch_duration: float) -> Callable[[], float]:
+    calls = 0
+
+    def perf_counter() -> float:
+        nonlocal calls
+        calls += 1
+        return calls * epoch_duration
+
+    return perf_counter
+
+
 def test_training_config_has_strict_cpu_defaults() -> None:
     config = TrainingConfig()
 
@@ -130,16 +151,42 @@ def test_tiny_cpu_terminal_training_overfits_and_saves_auditable_checkpoint(tmp_
     assert loaded.optimizer_state is not None
 
 
-def test_training_is_reproducible_and_rejects_a_tampered_shard(tmp_path: Path) -> None:
+def test_training_is_reproducible_despite_volatile_throughput(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manifest_path = _write_dataset(tmp_path / "dataset")
+    monkeypatch.setattr(
+        "innovation_ai.training.optimize.time.perf_counter", _perf_counter_with_epoch_duration(1.0)
+    )
     first = train_terminal_outcomes(manifest_path, tmp_path / "first", config=_config())
+    monkeypatch.setattr(
+        "innovation_ai.training.optimize.time.perf_counter", _perf_counter_with_epoch_duration(2.0)
+    )
     second = train_terminal_outcomes(manifest_path, tmp_path / "second", config=_config())
+
+    assert first.report.examples_per_second != second.report.examples_per_second
+    assert first.report.payload()["examples_per_second"] == first.report.examples_per_second
+    assert all(record.examples_per_second > 0.0 for record in first.report.epoch_history)
+    assert first.checkpoint_directory.name == second.checkpoint_directory.name
+    assert _bundle_bytes(first.checkpoint_directory) == _bundle_bytes(second.checkpoint_directory)
+
+    checkpoint_metrics = json.loads((first.checkpoint_directory / "metrics.json").read_text())
+    assert "examples_per_second" not in checkpoint_metrics
+    assert all(
+        "examples_per_second" not in record
+        for record in cast(list[dict[str, object]], checkpoint_metrics["epoch_history"])
+    )
 
     first_state = first.model.state_dict()
     second_state = second.model.state_dict()
     assert first.report.best_epoch == second.report.best_epoch
     for key in first_state:
         torch.testing.assert_close(first_state[key], second_state[key], rtol=0.0, atol=0.0)
+
+
+def test_training_rejects_a_tampered_shard(tmp_path: Path) -> None:
+    manifest_path = _write_dataset(tmp_path / "dataset")
+    train_terminal_outcomes(manifest_path, tmp_path / "checkpoints", config=_config())
 
     (manifest_path.parent / "train-00000.npz").write_bytes(b"tampered")
     with pytest.raises(TrainingError, match="digest"):

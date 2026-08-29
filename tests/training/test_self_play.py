@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -92,6 +93,14 @@ def test_action_ceiling_stops_before_sealing_a_shard(tmp_path: Path) -> None:
     with pytest.raises(SelfPlayError, match="action ceiling"):
         run_generation(tmp_path, manifest)
     assert not list((tmp_path / "replays").glob("*.jsonl.gz"))
+    failure = json.loads((tmp_path / "generation-failure.json").read_text())
+    assert failure["format"] == "innovation-ai-self-play-action-ceiling-failure"
+    assert failure["episode_id"] == "episode-000000"
+    assert failure["setup_seed"] == manifest.assignments[0].setup_seed
+    assert failure["action_count"] == 0
+    assert failure["action_ceiling"] == 1
+    assert failure["action_tail"] == []
+    assert failure["current_state_hash"].startswith("sha256:")
 
 
 @pytest.mark.slow

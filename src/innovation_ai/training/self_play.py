@@ -33,8 +33,9 @@ from innovation_ai.harness.records import (
 )
 from innovation_ai.harness.runner import GameSpec
 from innovation_ai.harness.seeds import agent_seed, setup_seed
+from innovation_ai.innovation.actions import action_payload
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
-from innovation_ai.innovation.state import GameState
+from innovation_ai.innovation.state import GameState, state_hash
 from innovation_ai.innovation.types import PlayerId
 
 if TYPE_CHECKING:
@@ -58,6 +59,17 @@ SELF_PLAY_SCHEMA_VERSION = 1
 
 class SelfPlayError(RuntimeError):
     pass
+
+
+class SelfPlayActionLimitError(SelfPlayError):
+    """A generation stopped at its declared action ceiling with a reproducible prefix."""
+
+    def __init__(self, diagnostic: Mapping[str, object]) -> None:
+        self.diagnostic = dict(diagnostic)
+        super().__init__(
+            f"episode {self.diagnostic['episode_id']!r} exceeded action ceiling "
+            f"{self.diagnostic['action_ceiling']}"
+        )
 
 
 class SelfPlayResumeError(SelfPlayError):
@@ -471,7 +483,11 @@ def run_generation(
             continue
         if stop_requested is not None and stop_requested():
             break
-        _run_shard(path, cm, manifest, assignments, registry, checkpoint_root)
+        try:
+            _run_shard(path, cm, manifest, assignments, registry, checkpoint_root)
+        except SelfPlayActionLimitError as error:
+            _atomic(root / "generation-failure.json", _json(error.diagnostic) + "\n")
+            raise
         sealed.append(shard.shard_id)
     return tuple(sealed)
 
@@ -584,11 +600,37 @@ def _run_shard_active(
     )
     while not pool.is_finished:
         schedule = scheduler.schedule(pool.runner)
-        if any(
-            sink.action_counts.get(submission.game_id, 0) >= manifest.config.action_ceiling
-            for submission in schedule.submissions
-        ):
-            raise SelfPlayError("action ceiling reached before a further submission")
+        submissions_by_game: dict[str, list[object]] = {}
+        for submission in schedule.submissions:
+            submissions_by_game.setdefault(submission.game_id, []).append(submission)
+        exceeded = next(
+            (
+                game_id
+                for game_id, submissions in submissions_by_game.items()
+                if sink.action_counts.get(game_id, 0) + len(submissions)
+                > manifest.config.action_ceiling
+            ),
+            None,
+        )
+        if exceeded is not None:
+            assignment = assignments[exceeded]
+            recorder = sink.recorder(exceeded)
+            raise SelfPlayActionLimitError(
+                {
+                    "format": "innovation-ai-self-play-action-ceiling-failure",
+                    "schema_version": 1,
+                    "producer_run_id": manifest.config.run_id,
+                    "generation": manifest.config.generation,
+                    "shard_id": shard.shard_id,
+                    "episode_id": exceeded,
+                    "setup_seed": assignment.setup_seed,
+                    "seat_policy_ids": [policy.policy_id for policy in assignment.seat_policies],
+                    "action_count": sink.action_counts.get(exceeded, 0),
+                    "action_ceiling": manifest.config.action_ceiling,
+                    "current_state_hash": state_hash(recorder.state),
+                    "action_tail": [action_payload(action) for action in recorder.actions[-32:]],
+                }
+            )
         pool.submit(schedule.submissions)
     write_compact_replay_shard(path, shard, episodes)
 

@@ -594,6 +594,12 @@ class CompactReplayRecorder:
 
         return self._state
 
+    @property
+    def actions(self) -> tuple[SemanticAction, ...]:
+        """Return the recorded semantic-action prefix for failure diagnostics."""
+
+        return tuple(self._actions)
+
     def decisions(self) -> tuple[Decision, ...]:
         """Return currently pending semantic decisions for external policy routing."""
 
