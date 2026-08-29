@@ -6,6 +6,7 @@ from typing import cast
 
 import pytest
 
+from innovation_ai.agents import RandomAgent
 from innovation_ai.harness import GameSpec, InnovationEngineAdapter, PullGameRunner
 from innovation_ai.harness.policy import ValuePosition
 from innovation_ai.harness.policy_scheduler import (
@@ -16,6 +17,7 @@ from innovation_ai.harness.policy_scheduler import (
 )
 from innovation_ai.innovation.actions import SemanticAction
 from innovation_ai.innovation.state import GameState
+from innovation_ai.innovation.types import PlayerId
 from innovation_ai.training.checkpoint import PolicyDescriptor
 from innovation_ai.training.determinizations import InformationSetSampler, SamplingExhausted
 
@@ -52,7 +54,7 @@ def _turn_runner(*game_ids: str) -> PullGameRunner[GameState]:
     )
     bootstrap = PolicyScheduler({}, {}, run_seed=1, generation=0)
     setup = bootstrap.schedule(runner)
-    assert all(audit.handling == "heuristic" for audit in setup.audits)
+    assert all(audit.handling == "baseline" for audit in setup.audits)
     runner.submit(setup.submissions)
     return runner
 
@@ -134,3 +136,25 @@ def test_sampler_failure_has_strict_and_heuristic_paths_without_true_state_fallb
     assert fallback.audits[0].handling == "sampler-fallback"
     assert isinstance(fallback.audits[0].failure, SamplerFailure)
     assert fallback.submissions[0].action in runner.pending()[0].decision.legal_actions
+
+
+def test_scheduler_supports_per_seat_learned_and_baseline_assignments() -> None:
+    runner = PullGameRunner(InnovationEngineAdapter(), (GameSpec("mixed", 1200),))
+    descriptor = _policy()
+    scheduler = PolicyScheduler(
+        {
+            ("mixed", PlayerId.PLAYER_1): LearnedPolicyAssignment(descriptor, "learned"),
+        },
+        {"learned": _ConstantEvaluator([])},
+        fallback_agents={("mixed", PlayerId.PLAYER_2): RandomAgent(44)},
+        run_seed=9,
+        generation=1,
+    )
+
+    setup = scheduler.schedule(runner)
+
+    assert tuple(audit.handling for audit in setup.audits) == ("heuristic", "baseline")
+    assert all(
+        audit.submission.action in request.decision.legal_actions
+        for audit, request in zip(setup.audits, runner.pending(), strict=True)
+    )
