@@ -26,6 +26,7 @@ from innovation_ai.harness.runner import PendingGameDecision, PullGameRunner, Su
 from innovation_ai.innovation.actions import DecisionKind
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.state import GameState
+from innovation_ai.innovation.types import PlayerId
 from innovation_ai.training.checkpoint import (
     DEFAULT_SAMPLER_RNG_VERSION,
     DEFAULT_SELECTOR_RNG_VERSION,
@@ -120,7 +121,13 @@ class PolicyDecisionAudit:
                 raise ValueError("selection and submission game IDs differ")
             if self.selection.action != self.submission.action:
                 raise ValueError("selection and submission actions differ")
-        if self.handling not in {"learned", "heuristic", "sampler-fallback", "evaluator-fallback"}:
+        if self.handling not in {
+            "learned",
+            "heuristic",
+            "baseline",
+            "sampler-fallback",
+            "evaluator-fallback",
+        }:
             raise ValueError("unknown policy decision handling")
         if self.handling == "learned" and (self.selection is None or self.failure is not None):
             raise ValueError("learned audit requires a selection and no failure")
@@ -159,6 +166,10 @@ class _LearnedPending:
     expansion: CandidateExpansion
 
 
+PolicyAssignmentKey = str | tuple[str, PlayerId]
+FallbackAgentKey = tuple[str, PlayerId]
+
+
 class PolicyScheduler:
     """Flatten safe afterstates across pending games and route values back exactly.
 
@@ -170,13 +181,14 @@ class PolicyScheduler:
 
     def __init__(
         self,
-        assignments: Mapping[str, LearnedPolicyAssignment],
+        assignments: Mapping[PolicyAssignmentKey, LearnedPolicyAssignment],
         evaluators: Mapping[str, BatchValueEvaluator],
         *,
         run_seed: int | str | bytes,
         generation: int,
         sampler_failure_mode: SamplerFailureMode = SamplerFailureMode.STRICT,
         heuristic: Agent | None = None,
+        fallback_agents: Mapping[FallbackAgentKey, Agent] | None = None,
         registry: CardRegistry | None = None,
         sampler_factory: SamplerFactory | None = None,
     ) -> None:
@@ -185,6 +197,7 @@ class PolicyScheduler:
         self._failure_mode = SamplerFailureMode(sampler_failure_mode)
         self._registry = registry or load_card_registry()
         self._heuristic = heuristic or SimpleHeuristicAgent(self._registry)
+        self._fallback_agents = dict(fallback_agents or {})
         self._spec_builder = InformationSetSpecBuilder(self._registry)
         self._expander = TrustedCandidateExpander(self._registry)
         self._rng_factory = PolicyRngFactory(run_seed, generation)
@@ -210,11 +223,19 @@ class PolicyScheduler:
         for request in pending:
             decision = request.decision
             if decision.kind is not DecisionKind.TURN_ACTION:
-                fallback_audits[(request.game_id, decision.decision_id)] = self._heuristic_audit(
-                    request, "heuristic"
+                fallback_audits[(request.game_id, decision.decision_id)] = self._fallback_audit(
+                    request,
+                    "heuristic"
+                    if self._assignment_for(request.game_id, decision.chooser) is not None
+                    else "baseline",
                 )
                 continue
-            assignment = self._assignment_for(request.game_id)
+            assignment = self._assignment_for(request.game_id, decision.chooser)
+            if assignment is None:
+                fallback_audits[(request.game_id, decision.decision_id)] = self._fallback_audit(
+                    request, "baseline"
+                )
+                continue
             try:
                 learned.append(self._expand_pending(runner, request, assignment))
             except (InformationSetError, CandidateExpansionError) as error:
@@ -232,8 +253,8 @@ class PolicyScheduler:
             if isinstance(evaluated, EvaluatorFailure):
                 if self._failure_mode is SamplerFailureMode.STRICT:
                     raise evaluated
-                learned_audits[key] = self._heuristic_audit(
-                    item.request, "evaluator-fallback", evaluated
+                learned_audits[key] = self._fallback_audit(
+                    item.request, "evaluator-fallback", evaluated, force_heuristic=True
                 )
                 continue
             if evaluated is None:  # terminal-only expansion has an empty value tuple
@@ -284,12 +305,11 @@ class PolicyScheduler:
         runner.submit(schedule.submissions)
         return schedule
 
-    def _assignment_for(self, game_id: str) -> LearnedPolicyAssignment:
-        try:
-            return self._assignments[game_id]
-        except KeyError as error:
-            message = f"no learned policy assignment for game {game_id!r}"
-            raise PolicySchedulerError(message) from error
+    def _assignment_for(self, game_id: str, chooser: PlayerId) -> LearnedPolicyAssignment | None:
+        seat_assignment = self._assignments.get((game_id, chooser))
+        if seat_assignment is not None:
+            return seat_assignment
+        return self._assignments.get(game_id)
 
     def _expand_pending(
         self,
@@ -335,15 +355,29 @@ class PolicyScheduler:
     ) -> PolicyDecisionAudit:
         if self._failure_mode is SamplerFailureMode.STRICT:
             raise failure
-        return self._heuristic_audit(request, "sampler-fallback", failure)
+        return self._fallback_audit(
+            request,
+            "sampler-fallback",
+            failure,
+            force_heuristic=True,
+        )
 
-    def _heuristic_audit(
+    def _fallback_audit(
         self,
         request: PendingGameDecision,
         handling: str,
         failure: PolicySchedulerError | None = None,
+        *,
+        force_heuristic: bool = False,
     ) -> PolicyDecisionAudit:
-        action = self._heuristic.choose_action(request.decision)
+        agent = (
+            self._heuristic
+            if force_heuristic
+            else self._fallback_agents.get(
+                (request.game_id, request.decision.chooser), self._heuristic
+            )
+        )
+        action = agent.choose_action(request.decision)
         if action not in request.decision.legal_actions:
             raise FallbackActionError(
                 f"heuristic returned an illegal action for {request.game_id!r} "
