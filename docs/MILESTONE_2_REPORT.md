@@ -49,16 +49,18 @@ frozen learned self-play, candidate dataset materialization, and candidate train
 artifact edits:
 
 - bootstrap examples: **1017** from 4 episodes;
-- learned-generation examples: **449** from 2 episodes;
+- learned-generation examples: **409** from 2 episodes;
 - candidate checkpoint:
-  `sha256:1909f857575dfcaafacef5d775d38bbac650cc00cf77b75872cff251b09779f3`.
+  `sha256:7a117edc6f28725e57cf7a18029406180ec127e658e6933406b88b9a49be5bae`.
 
 These IDs describe a smoke artifact in ignored `artifacts/`; they are evidence of pipeline
 completion, not permanent release fixtures.
 
 A one-seed-pair candidate-versus-random arena also completed both seat-swapped games and produced
-a paired report. Its 2-0 result is deliberately **not** a strength or promotion claim; the release
-promotion contract requires 200 predeclared pairs against the incumbent.
+a paired report. Its 0-2 result is deliberately **not** a strength or promotion claim; the release
+promotion contract requires 200 predeclared pairs against the incumbent. A learned-versus-learned
+arena using these deliberately tiny two-epoch smoke checkpoints reached the explicit action ceiling,
+which is reported rather than hidden or converted into a result.
 
 ## Baseline and profile observations
 
@@ -118,5 +120,6 @@ root; `innovation-ai arena --help` lists the paired-seed and promotion options.
 - The initial implementation is single-process CPU. The batch/serialization boundaries are ready
   for process or machine separation, but no distributed scheduler, CUDA, mixed precision, DDP,
   MCTS, recurrent state, expansions, or multiplayer support is included.
-- Deterministic heuristic self-play can cycle for some setups; actor and arena action ceilings are
-  explicit and fail loudly without sealing partial episodes.
+- Deterministic heuristic self-play and weak temperature-zero learned checkpoints can cycle for
+  some setups; actor and arena action ceilings are explicit and fail loudly without sealing partial
+  episodes or inventing arena outcomes.
