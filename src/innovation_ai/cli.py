@@ -375,7 +375,10 @@ def _iterate(args: argparse.Namespace) -> int:
             action_ceiling=args.max_actions,
         ),
         (heuristic, random),
-        ((heuristic.policy_id, random.policy_id),),
+        (
+            (heuristic.policy_id, random.policy_id),
+            (random.policy_id, heuristic.policy_id),
+        ),
         bootstrap_games,
     )
     bootstrap_dir = root / "bootstrap"
