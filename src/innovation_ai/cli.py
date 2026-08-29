@@ -488,7 +488,11 @@ def _arena(args: argparse.Namespace) -> int:
     from innovation_ai.training.checkpoint import load_policy_descriptor
     from innovation_ai.training.inference import FrozenEvaluatorCache
 
-    candidate = replace(load_policy_descriptor(args.candidate_policy), temperature=0.0)
+    candidate = replace(
+        load_policy_descriptor(args.candidate_policy),
+        temperature=0.0,
+        determinization_count=args.determinizations,
+    )
     policies: dict[str, ArenaPolicyDescriptor] = {
         candidate.policy_id: ArenaPolicyDescriptor(
             candidate.policy_id, "learned", candidate.checkpoint_id
@@ -507,7 +511,11 @@ def _arena(args: argparse.Namespace) -> int:
             raise ValueError(f"unknown arena opponent {name!r}")
         opponent_ids.append(policy_id)
     for path in args.opponent_policy:
-        descriptor = replace(load_policy_descriptor(path), temperature=0.0)
+        descriptor = replace(
+            load_policy_descriptor(path),
+            temperature=0.0,
+            determinization_count=args.determinizations,
+        )
         learned[descriptor.policy_id] = descriptor
         policies[descriptor.policy_id] = ArenaPolicyDescriptor(
             descriptor.policy_id, "learned", descriptor.checkpoint_id
@@ -954,6 +962,7 @@ def build_parser() -> argparse.ArgumentParser:
     arena.add_argument("--checkpoint-root", type=Path, required=True)
     arena.add_argument("--seed-start", type=int, default=50_000)
     arena.add_argument("--seed-pairs", type=int, default=200)
+    arena.add_argument("--determinizations", type=int, default=4)
     arena.add_argument("--bootstrap-seed", type=int, default=0)
     arena.add_argument("--max-actions", type=int, default=10_000)
     arena.add_argument("--output", type=Path, required=True)
