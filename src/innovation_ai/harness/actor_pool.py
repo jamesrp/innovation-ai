@@ -46,6 +46,17 @@ class BoundedActorPool[StateT]:
         self._refill()
 
     @property
+    def runner(self) -> PullGameRunner[StateT]:
+        """Return the live pull runner for read-only scheduling integration.
+
+        Schedulers may inspect this runner to build a snapshot, but callers must
+        submit returned actions through :meth:`submit` so completed games retire
+        and vacant actor slots refill correctly.
+        """
+
+        return self._runner
+
+    @property
     def max_games_in_flight(self) -> int:
         """Return the strict upper bound on retained live game state."""
 
