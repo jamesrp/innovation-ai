@@ -1,6 +1,6 @@
 [project]
 name = "innovation-ai"
-version = "0.1.2"
+version = "0.2.0"
 description = "A deterministic Innovation game engine and later ML research environment."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -49,6 +49,10 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["innovation_ai"]
+omit = [
+    "src/innovation_ai/__main__.py",
+    "src/innovation_ai/cli.py",
+]
 
 [tool.coverage.report]
 fail_under = 85

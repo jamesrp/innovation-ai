@@ -1,0 +1,24 @@
+[iterate]
+run_dir = "artifacts/runs/cpu-value-baseline"
+seed = 1000
+bootstrap_games = 1000
+learned_games = 2000
+games_in_flight = 32
+shard_size = 256
+validation_fraction = 0.2
+epochs = 100
+patience = 10
+batch_size = 1024
+torch_threads = 1
+
+[profile]
+seed = 7000
+games = 1
+max_actions = 1000
+warmup = 1
+samples = 3
+batch_sizes = [1, 8, 32]
+torch_threads = [1, 2]
+games_in_flight = [1, 8, 32]
+determinizations = [1, 4]
+full = true

@@ -1,7 +1,33 @@
 """Batch-ready game execution separated from agents and engine rules."""
 
+from innovation_ai.harness.actor_pool import ActorPool, BoundedActorPool
 from innovation_ai.harness.engine import InnovationEngineAdapter, RunnerEngine
-from innovation_ai.harness.records import GameRecord, GameResult, RecordedAction
+from innovation_ai.harness.metrics import (
+    JsonlMetricSink,
+    MetricSink,
+    NoOpMetricSink,
+    NoOpTimerSink,
+    TimerSink,
+)
+from innovation_ai.harness.policy import (
+    BatchValueEvaluator,
+    CandidateRoute,
+    PlayerRelation,
+    PolicySelection,
+    PublicBoundary,
+    PublicDecisionContext,
+    PublicTurnProgress,
+    ValuePosition,
+    ValuePositionKind,
+)
+from innovation_ai.harness.records import (
+    GameRecord,
+    GameResult,
+    RecordedAction,
+    RunnerRecording,
+    SemanticActionEvent,
+    SemanticActionSink,
+)
 from innovation_ai.harness.runner import (
     DuplicateGameError,
     GameBlockedError,
@@ -18,21 +44,40 @@ from innovation_ai.harness.runner import (
 )
 
 __all__ = [
+    "ActorPool",
+    "BatchValueEvaluator",
+    "BoundedActorPool",
+    "CandidateRoute",
     "DuplicateGameError",
     "GameBlockedError",
     "GameRecord",
     "GameResult",
     "GameSpec",
     "InnovationEngineAdapter",
+    "JsonlMetricSink",
+    "MetricSink",
     "MultiGameRunner",
+    "NoOpMetricSink",
+    "NoOpTimerSink",
     "PendingGameDecision",
+    "PlayerRelation",
+    "PolicySelection",
+    "PublicBoundary",
+    "PublicDecisionContext",
+    "PublicTurnProgress",
     "PullGameRunner",
     "RecordedAction",
     "RunnerEngine",
     "RunnerError",
+    "RunnerRecording",
+    "SemanticActionEvent",
+    "SemanticActionSink",
     "SingleGameRunner",
     "StepLimitError",
     "Submission",
     "SubmissionError",
+    "TimerSink",
     "UnknownGameError",
+    "ValuePosition",
+    "ValuePositionKind",
 ]

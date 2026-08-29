@@ -35,3 +35,12 @@ def test_replay_cli_reports_corrupt_log(tmp_path: Path, capsys: pytest.CaptureFi
     path.write_text('{"truncated":', encoding="utf-8")
     assert main(["replay", str(path)]) == 2
     assert "error: invalid JSON" in capsys.readouterr().err
+
+
+def test_ml_workflow_commands_are_registered_and_encoding_is_inspectable(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["inspect-encoding", "--seed", "7", "--steps", "2"]) == 0
+    payload = capsys.readouterr().out
+    assert '"dimension": 4690' in payload
+    assert '"fingerprint": "sha256:' in payload
