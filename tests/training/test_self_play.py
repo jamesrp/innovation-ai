@@ -13,6 +13,7 @@ from innovation_ai.training.self_play import (
     SeatPolicy,
     SelfPlayError,
     SelfPlayResumeError,
+    default_learned_pool_seat_pairs,
     load_manifest,
     plan_generation,
     run_generation,
@@ -107,3 +108,16 @@ def test_bootstrap_generation_seals_and_resumes_without_duplicates(tmp_path: Pat
     first = shard.read_bytes()
     assert run_generation(tmp_path, manifest) == ("shard-00000",)
     assert shard.read_bytes() == first
+
+
+def test_default_learned_pool_mix_is_fixed_50_25_25_with_balanced_seats() -> None:
+    pairs = default_learned_pool_seat_pairs("latest", "previous", ("older-b", "older-a"))
+    opponents = tuple(second if first == "latest" else first for first, second in pairs)
+
+    assert opponents.count("latest") == 4
+    assert opponents.count("previous") == 2
+    assert opponents.count("older-a") == 1
+    assert opponents.count("older-b") == 1
+    assert sum(first == "latest" for first, _ in pairs) == sum(
+        second == "latest" for _, second in pairs
+    )

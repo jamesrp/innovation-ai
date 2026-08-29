@@ -154,6 +154,8 @@ class GenerationConfig:
             or not self.validation_level
         ):
             raise ValueError("invalid generation configuration")
+        if self.validation_level not in {"full", "cheap", "off"}:
+            raise ValueError("invalid generation validation level")
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +303,37 @@ def load_manifest(path: Path) -> GenerationManifest:
     return result
 
 
+def default_learned_pool_seat_pairs(
+    latest_policy_id: str,
+    previous_policy_id: str,
+    older_policy_ids: Iterable[str],
+) -> tuple[tuple[str, str], ...]:
+    """Return the fixed 50/25/25 opponent mix once multiple learned policies exist.
+
+    The latest policy occupies both physical seats equally. Older opponents are uniform within
+    their 25% stratum; repeating this canonical tuple preserves the declared distribution across
+    resumptions and actor batch sizes.
+    """
+
+    older = tuple(sorted(set(older_policy_ids)))
+    if not latest_policy_id or not previous_policy_id or not older:
+        raise ValueError("latest, previous, and at least one older policy are required")
+    if latest_policy_id == previous_policy_id or latest_policy_id in older:
+        raise ValueError("learned pool policy strata must be distinct")
+    if previous_policy_id in older:
+        raise ValueError("previous policy cannot also be in the older stratum")
+    opponents = (
+        *((latest_policy_id,) * (2 * len(older))),
+        *((previous_policy_id,) * len(older)),
+        *older,
+    )
+    pairs: list[tuple[str, str]] = []
+    for index, opponent_id in enumerate(opponents):
+        pair = (latest_policy_id, opponent_id)
+        pairs.append(pair if index % 2 == 0 else (pair[1], pair[0]))
+    return tuple(pairs)
+
+
 def plan_generation(
     config: GenerationConfig,
     policies: Iterable[SeatPolicy],
@@ -444,6 +477,27 @@ def run_generation(
 
 
 def _run_shard(
+    path: Path,
+    shard: CompactReplayShardManifest,
+    manifest: GenerationManifest,
+    assignments: Mapping[str, EpisodeAssignment],
+    registry: CardRegistry,
+    checkpoint_root: str | Path | None,
+) -> None:
+    from innovation_ai.innovation.zones import ValidationLevel, validation
+
+    with validation(ValidationLevel(manifest.config.validation_level)):
+        _run_shard_active(
+            path,
+            shard,
+            manifest,
+            assignments,
+            registry,
+            checkpoint_root,
+        )
+
+
+def _run_shard_active(
     path: Path,
     shard: CompactReplayShardManifest,
     manifest: GenerationManifest,
