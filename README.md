@@ -23,15 +23,19 @@ Implemented components include:
 - CPU profiling/reporting across engine, encoding, inference, training, determinization,
   afterstates, replay extraction, self-play, and arena execution.
 
-Milestone 2 is a pipeline baseline, not a playing-strength claim. The next scale step identified on
-the CPU development box is bounded parallel actor processes; recurrent knowledge, belief models,
-MCTS, GPU/distributed training, expansions, and multiplayer remain future work.
+Milestone 2 is a pipeline baseline, not a playing-strength claim. **Milestone 3 is now the active
+training prototype:** run a measured medium-scale iteration, deterministic arena preflights, and
+controlled experiments before changing the frozen encoder or value-network architecture. The
+next scale step identified on the CPU development box is bounded parallel actor processes;
+recurrent knowledge, belief models, MCTS, GPU/distributed training, expansions, and multiplayer
+remain future work.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`
 - Implementation sequence: `docs/MILESTONE_1_PLAN.md`
 - First ML milestone plan: `docs/MILESTONE_2_PLAN.md`
 - Milestone 2 implementation/report: `docs/MILESTONE_2_REPORT.md`
+- Milestone 3 training prototype: `docs/MILESTONE_3_TRAINING_PROTOTYPE.md`
 - Afterstate feasibility decision: `docs/MILESTONE_2_AFTERSTATE_SPIKE.md`
 - Frozen encoder layout: `docs/encoder_v1_manifest.json`
 - WP2 state/geometry contract: `docs/WP2_STATE_CONTRACT.md`

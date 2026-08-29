@@ -6,8 +6,8 @@ This repository implements **Innovation (base game, Third Edition), two players*
 toward a strong self-play-trained Innovation AI. **Milestones 1 and 2 are complete:** the
 deterministic engine covers all 105 supplied cards, and the first learned-value pipeline includes
 encoder v1, compact replay training, information-safe afterstates, frozen self-play, paired arenas,
-and CPU profiling. Future work should scale and strengthen this baseline without weakening its
-information or reproducibility contracts.
+and CPU profiling. **Milestone 3 is the current training prototype:** run measured medium-scale
+training and arena preflights before changing the frozen encoder/model contracts.
 
 Read these before changing engine or ML behavior:
 
@@ -19,6 +19,7 @@ Read these before changing engine or ML behavior:
 5. `docs/MILESTONE_1_PLAN.md` — completed engine implementation contracts and history.
 6. `docs/MILESTONE_2_PLAN.md` — completed first learned-value milestone contracts and gates.
 7. `docs/MILESTONE_2_REPORT.md` — implementation evidence, commands, profiling, and limitations.
+8. `docs/MILESTONE_3_TRAINING_PROTOTYPE.md` — current experiment sequence, gates, and handoff.
 
 Do not silently resolve a rules ambiguity. Record the interpretation and a focused test; if
 it materially changes gameplay or observations, request a project decision first.

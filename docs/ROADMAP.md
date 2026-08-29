@@ -11,13 +11,21 @@ useful playable AI, not only an engine or isolated model experiment. See `PROJEC
 Complete the deterministic two-player Innovation base-game engine, all 105 cards, agents,
 runners, replay, and invariant/fuzz coverage as specified in `docs/MILESTONE_1_PLAN.md`.
 
-## Milestone 2 — planned
+## Milestone 2 — complete
 
-Deliver the first end-to-end learned baseline: audited random/heuristic agents, a flat
+Delivered the first end-to-end learned baseline: audited random/heuristic agents, a flat
 viewpoint-relative encoder, the `D -> 128 tanh -> 1 sigmoid` PyTorch value network,
 terminal-outcome training from compact replay data, information-safe batched one-ply afterstate
 selection, frozen-checkpoint self-play, paired arena evaluation, and CPU profiling. See
-`docs/MILESTONE_2_PLAN.md`.
+`docs/MILESTONE_2_PLAN.md` and `docs/MILESTONE_2_REPORT.md`.
+
+## Milestone 3 — current: training prototype
+
+Use the frozen Milestone 2 architecture for measured medium-scale training, deterministic arena
+preflights, cycle/completion diagnosis, and controlled one-variable experiments. Establish whether
+the current pipeline improves held-out value metrics and produces evaluable policies before
+changing the encoder, model architecture, information policy, or search method. See
+`docs/MILESTONE_3_TRAINING_PROTOTYPE.md`.
 
 ## Future information-memory policy
 
