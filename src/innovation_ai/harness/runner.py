@@ -7,7 +7,13 @@ from dataclasses import dataclass
 
 from innovation_ai.agents.base import Agent
 from innovation_ai.harness.engine import RunnerEngine
-from innovation_ai.harness.records import GameRecord, GameResult, RecordedAction
+from innovation_ai.harness.records import (
+    GameRecord,
+    GameResult,
+    RecordedAction,
+    RunnerRecording,
+    SemanticActionEvent,
+)
 from innovation_ai.innovation.actions import Decision, SemanticAction
 from innovation_ai.innovation.types import PlayerId
 
@@ -86,8 +92,11 @@ class PullGameRunner[StateT]:
         self,
         engine: RunnerEngine[StateT],
         games: Iterable[GameSpec] = (),
+        *,
+        recording: RunnerRecording | None = None,
     ) -> None:
         self._engine = engine
+        self._recording = recording or RunnerRecording()
         self._games: dict[str, _RunningGame[StateT]] = {}
         for spec in games:
             self.add_game(spec)
@@ -176,6 +185,7 @@ class PullGameRunner[StateT]:
             for game_id, game in self._games.items()
         }
         newly_completed: list[GameResult[StateT]] = []
+        emitted_events: list[SemanticActionEvent] = []
         for request in pending:
             key = (request.game_id, request.decision.decision_id)
             chosen = selected.get(key)
@@ -186,25 +196,38 @@ class PullGameRunner[StateT]:
             if result is not None:
                 raise SubmissionError(f"game {request.game_id} ended before its submitted action")
             state = self._engine.apply(state, submission.action)
-            fingerprint = self._engine.fingerprint(state)
-            records.append(
-                RecordedAction(
-                    decision.decision_id,
-                    decision.chooser,
-                    submission.action,
-                    fingerprint,
-                )
+            fingerprint = (
+                self._engine.fingerprint(state) if self._recording.transition_fingerprints else None
             )
+            event = SemanticActionEvent(
+                request.game_id,
+                self._games[request.game_id].spec.setup_seed,
+                decision.decision_id,
+                decision.chooser,
+                submission.action,
+                fingerprint,
+            )
+            if self._recording.retain_actions:
+                records.append(
+                    RecordedAction(
+                        decision.decision_id,
+                        decision.chooser,
+                        submission.action,
+                        fingerprint,
+                    )
+                )
+            emitted_events.append(event)
             terminal = self._engine.terminal_result(state)
             if terminal is not None:
                 game = self._games[request.game_id]
+                final_fingerprint = fingerprint or self._engine.fingerprint(state)
                 record = GameRecord(
                     request.game_id,
                     game.spec.setup_seed,
                     game.initial_state,
                     tuple(records),
                     terminal,
-                    fingerprint,
+                    final_fingerprint,
                 )
                 result = GameResult(state, record)
                 newly_completed.append(result)
@@ -215,7 +238,22 @@ class PullGameRunner[StateT]:
             game.state = state
             game.actions = records
             game.result = result
+        if self._recording.action_sink is not None:
+            for event in emitted_events:
+                self._recording.action_sink.record_action(event)
         return tuple(newly_completed)
+
+    def retire_game(self, game_id: str) -> GameResult[StateT]:
+        """Remove and return a completed game so long-running actors release its state/actions."""
+
+        try:
+            game = self._games[game_id]
+        except KeyError as error:
+            raise UnknownGameError(f"unknown game ID: {game_id}") from error
+        if game.result is None:
+            raise RunnerError(f"game {game_id} cannot retire before reaching a terminal result")
+        del self._games[game_id]
+        return game.result
 
     def state(self, game_id: str) -> StateT:
         """Return the current opaque state for integration and diagnostics."""
