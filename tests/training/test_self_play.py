@@ -11,6 +11,7 @@ from innovation_ai.agents.descriptors import (
 from innovation_ai.training.self_play import (
     GenerationConfig,
     SeatPolicy,
+    SelfPlayError,
     SelfPlayResumeError,
     load_manifest,
     plan_generation,
@@ -77,6 +78,19 @@ def test_resume_rejects_an_incomplete_shard(tmp_path: Path) -> None:
     (replay / "shard-00000.jsonl.gz").write_bytes(b"partial")
     with pytest.raises(SelfPlayResumeError, match="incomplete or invalid"):
         run_generation(tmp_path, manifest)
+
+
+def test_action_ceiling_stops_before_sealing_a_shard(tmp_path: Path) -> None:
+    heuristic, random = _baseline_policies()
+    manifest = plan_generation(
+        GenerationConfig("ceiling-run", 91, 0, action_ceiling=1),
+        (random, heuristic),
+        ((heuristic.policy_id, random.policy_id),),
+        1,
+    )
+    with pytest.raises(SelfPlayError, match="action ceiling"):
+        run_generation(tmp_path, manifest)
+    assert not list((tmp_path / "replays").glob("*.jsonl.gz"))
 
 
 @pytest.mark.slow

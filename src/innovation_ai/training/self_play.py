@@ -24,13 +24,14 @@ from innovation_ai.agents.heuristic import SimpleHeuristicAgent
 from innovation_ai.agents.random import AGENT_RNG_VERSION, RandomAgent
 from innovation_ai.harness.actor_pool import BoundedActorPool
 from innovation_ai.harness.engine import InnovationEngineAdapter
+from innovation_ai.harness.policy import BatchValueEvaluator
 from innovation_ai.harness.records import (
     GameResult,
     RunnerRecording,
     SemanticActionEvent,
     SemanticActionSink,
 )
-from innovation_ai.harness.runner import GameSpec, Submission
+from innovation_ai.harness.runner import GameSpec
 from innovation_ai.harness.seeds import agent_seed, setup_seed
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.state import GameState
@@ -387,7 +388,7 @@ def _provenance(
         ),
         DeterminizationProvenance(
             "information-set-sampler-v1",
-            "sha256-domain-separated-v1",
+            "sha256-counter-v1",
             0 if learned is None else learned.determinization_count,
             "simple-heuristic",
             manifest.config.sampler_failure_mode is SamplerFailureMode.STRICT,
@@ -474,91 +475,67 @@ def _run_shard(
         on_complete=done,
         recording=RunnerRecording(False, False, sink),
     )
-    # Current scheduler API is game-wide; reject mixed learned seats until its
-    # per-seat API lands.
-    learned = {
-        e: next((p.learned for p in assignments[e].seat_policies if p.learned), None)
-        for e in shard.episode_ids
-    }
-    if any(
-        (a.seat_policies[0].learned is None) != (a.seat_policies[1].learned is None)
-        or (
-            a.seat_policies[0].learned is not None
-            and a.seat_policies[1].learned is not None
-            and a.seat_policies[0].learned.policy_id != a.seat_policies[1].learned.policy_id
-        )
-        for a in (assignments[e] for e in shard.episode_ids)
-    ):
-        raise SelfPlayError("current scheduler requires the same learned policy in both seats")
-    if any(learned.values()):
+    # The scheduler receives immutable per-seat learned assignments and actor-local
+    # baseline/fallback agents.  It may inspect the public pool runner, but all
+    # commits route through ``pool.submit`` so completion retirement/refill stays bounded.
+    from innovation_ai.harness.policy_scheduler import LearnedPolicyAssignment, PolicyScheduler
+    from innovation_ai.harness.policy_scheduler import SamplerFailureMode as SchedulerFailureMode
+
+    fallback_agents: dict[tuple[str, PlayerId], Agent] = {}
+    learned_assignments: dict[str | tuple[str, PlayerId], LearnedPolicyAssignment] = {}
+    descriptors: dict[str, PolicyDescriptor] = {}
+    for episode_id in shard.episode_ids:
+        assignment = assignments[episode_id]
+        for seat_id, seat_policy in zip(PlayerId, assignment.seat_policies, strict=True):
+            key = (episode_id, seat_id)
+            if seat_policy.learned is not None:
+                descriptor = seat_policy.learned
+                descriptors.setdefault(descriptor.policy_id, descriptor)
+                learned_assignments[key] = LearnedPolicyAssignment(descriptor, descriptor.policy_id)
+                # Learned control remains paid-turn-only in this milestone.
+                fallback_agents[key] = SimpleHeuristicAgent(registry)
+            elif seat_policy.descriptor == SIMPLE_HEURISTIC_AGENT_DESCRIPTOR:
+                fallback_agents[key] = SimpleHeuristicAgent(registry)
+            elif seat_policy.descriptor == RANDOM_AGENT_DESCRIPTOR:
+                fallback_agents[key] = RandomAgent(
+                    agent_seed(
+                        manifest.config.run_seed,
+                        episode_id,
+                        seat_id.value,
+                        seat_policy.policy_id,
+                    )
+                )
+            else:
+                raise SelfPlayError(f"unsupported baseline policy {seat_policy.policy_id!r}")
+
+    evaluators: dict[str, BatchValueEvaluator] = {}
+    if descriptors:
         if checkpoint_root is None:
             raise SelfPlayError("learned generation requires checkpoint_root")
-        from innovation_ai.harness.policy_scheduler import LearnedPolicyAssignment, PolicyScheduler
-        from innovation_ai.harness.policy_scheduler import (
-            SamplerFailureMode as SchedulerFailureMode,
-        )
         from innovation_ai.training.inference import FrozenEvaluatorCache
 
         cache = FrozenEvaluatorCache(checkpoint_root)
-        desc: dict[str, PolicyDescriptor] = {
-            p.policy_id: p for p in learned.values() if p is not None
+        evaluators = {
+            policy_id: cache.evaluator_for(descriptor)
+            for policy_id, descriptor in descriptors.items()
         }
-        if any(value is None for value in learned.values()):
-            raise SelfPlayError("cannot mix learned and baseline assignments in one shard")
-        learned_descriptors = {episode_id: value for episode_id, value in learned.items() if value}
-        sched = PolicyScheduler(
-            {
-                e: LearnedPolicyAssignment(
-                    desc[learned_descriptors[e].policy_id], learned_descriptors[e].policy_id
-                )
-                for e in shard.episode_ids
-            },
-            {key: cache.evaluator_for(value) for key, value in desc.items()},
-            run_seed=manifest.config.run_seed,
-            generation=manifest.config.generation,
-            sampler_failure_mode=SchedulerFailureMode(manifest.config.sampler_failure_mode),
-            registry=registry,
-        )
-        while not pool.is_finished:
-            schedule = sched.schedule(pool._runner)
-            if any(
-                sink.action_counts.get(submission.game_id, 0) >= manifest.config.action_ceiling
-                for submission in schedule.submissions
-            ):
-                raise SelfPlayError("action ceiling reached before a further submission")
-            pool.submit(schedule.submissions)  # actor pool owns retirement/refill
-    else:
-        agents: dict[tuple[str, PlayerId], Agent] = {}
-        while not pool.is_finished:
-            submits = []
-            for request in pool.pending():
-                seat = assignments[request.game_id].seat_policies[
-                    0 if request.decision.chooser is PlayerId.PLAYER_1 else 1
-                ]
-                key = (request.game_id, request.decision.chooser)
-                agent = agents.get(key)
-                if agent is None:
-                    if seat.descriptor == SIMPLE_HEURISTIC_AGENT_DESCRIPTOR:
-                        agent = SimpleHeuristicAgent(registry)
-                    elif seat.descriptor == RANDOM_AGENT_DESCRIPTOR:
-                        agent = RandomAgent(
-                            agent_seed(
-                                manifest.config.run_seed,
-                                request.game_id,
-                                request.decision.chooser.value,
-                                seat.policy_id,
-                            )
-                        )
-                    else:
-                        raise SelfPlayError(f"unsupported baseline policy {seat.policy_id!r}")
-                    agents[key] = agent
-                submits.append(Submission(request.game_id, agent.choose_action(request.decision)))
-            if any(
-                sink.action_counts.get(submission.game_id, 0) >= manifest.config.action_ceiling
-                for submission in submits
-            ):
-                raise SelfPlayError("action ceiling reached before a further submission")
-            pool.submit(tuple(submits))
+    scheduler = PolicyScheduler(
+        learned_assignments,
+        evaluators,
+        fallback_agents=fallback_agents,
+        run_seed=manifest.config.run_seed,
+        generation=manifest.config.generation,
+        sampler_failure_mode=SchedulerFailureMode(manifest.config.sampler_failure_mode),
+        registry=registry,
+    )
+    while not pool.is_finished:
+        schedule = scheduler.schedule(pool.runner)
+        if any(
+            sink.action_counts.get(submission.game_id, 0) >= manifest.config.action_ceiling
+            for submission in schedule.submissions
+        ):
+            raise SelfPlayError("action ceiling reached before a further submission")
+        pool.submit(schedule.submissions)
     write_compact_replay_shard(path, shard, episodes)
 
 
