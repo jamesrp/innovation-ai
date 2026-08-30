@@ -97,11 +97,14 @@ def test_policy_descriptor_identity_is_content_derived_and_checkpoint_compatible
     directory = save_checkpoint(tmp_path, _model(encoder.input_dimension), encoder)
     manifest = load_checkpoint(directory).manifest
     cold = PolicyDescriptor.from_checkpoint(manifest, temperature=0.0)
+    repetition_aware = replace(cold, selector_version="recent-paid-action-penalty-v1")
     warm = PolicyDescriptor.from_checkpoint(manifest, temperature=0.2, determinization_count=4)
     descriptor_path = tmp_path / "policy.json"
     cold.save(descriptor_path)
 
     assert cold.policy_id != warm.policy_id
+    assert cold.policy_id != repetition_aware.policy_id
+    assert repetition_aware.checkpoint_id == cold.checkpoint_id
     assert load_policy_descriptor(descriptor_path) == cold
     assert_policy_compatible(cold, manifest)
     with pytest.raises(CheckpointCompatibilityError, match="encoder_layout_fingerprint"):

@@ -20,6 +20,7 @@ from innovation_ai.innovation.state import GameState
 from innovation_ai.innovation.types import PlayerId
 from innovation_ai.training.checkpoint import PolicyDescriptor
 from innovation_ai.training.determinizations import InformationSetSampler, SamplingExhausted
+from innovation_ai.training.selection import REPETITION_AWARE_SELECTOR_VERSION
 
 
 @dataclass
@@ -37,13 +38,16 @@ class _FailingSampler:
         raise SamplingExhausted("fixture sampler failure")
 
 
-def _policy(*, temperature: float = 0.0) -> PolicyDescriptor:
+def _policy(
+    *, temperature: float = 0.0, selector_version: str = "temperature-softmax-v1"
+) -> PolicyDescriptor:
     return PolicyDescriptor(
         checkpoint_id="fixture-checkpoint",
         encoder_layout_fingerprint="fixture-encoder",
         card_data_fingerprint="fixture-cards",
         effects_fingerprint="fixture-effects",
         temperature=temperature,
+        selector_version=selector_version,
     )
 
 
@@ -105,6 +109,27 @@ def test_zero_temperature_and_stochastic_selection_are_rebatch_invariant() -> No
         return next(item.action for item in schedule.submissions if item.game_id == "solo")
 
     assert choose(("solo",)) == choose(("solo", "other"))
+
+
+def test_repetition_history_advances_only_after_commit_and_is_idempotent() -> None:
+    runner = _turn_runner("history")
+    descriptor = _policy(selector_version=REPETITION_AWARE_SELECTOR_VERSION)
+    scheduler = PolicyScheduler(
+        {"history": LearnedPolicyAssignment(descriptor, "value")},
+        {"value": _ConstantEvaluator([])},
+        run_seed=5,
+        generation=0,
+    )
+
+    schedule = scheduler.schedule(runner)
+    assert scheduler._recent_paid_actions == {}
+    runner.submit(schedule.submissions)
+    scheduler.record_committed(schedule)
+    scheduler.record_committed(schedule)
+
+    chooser = schedule.audits[0].chooser
+    history = scheduler._recent_paid_actions[("history", chooser, descriptor.policy_id)]
+    assert tuple(history) == (schedule.submissions[0].action,)
 
 
 def test_sampler_failure_has_strict_and_heuristic_paths_without_true_state_fallback() -> None:

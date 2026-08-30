@@ -4,15 +4,19 @@ import pytest
 
 from innovation_ai.harness.afterstates import CandidateExpansion, TerminalCandidate
 from innovation_ai.harness.policy import CandidateRoute
-from innovation_ai.innovation.actions import DrawAction, MeldAction
+from innovation_ai.innovation.actions import DogmaAction, DrawAction, MeldAction
 from innovation_ai.innovation.types import CardId, PlayerId
 from innovation_ai.training.selection import (
+    REPETITION_AWARE_SELECTOR_VERSION,
+    REPETITION_HISTORY_WINDOW,
     ActionValue,
     PolicyRngFactory,
     SelectionDomain,
     aggregate_candidate_values,
+    choose_repetition_aware_action,
     choose_temperature_action,
     select_expansion_action,
+    semantic_action_pattern,
 )
 
 
@@ -62,6 +66,76 @@ def test_temperature_zero_is_legal_order_argmax_and_terminal_needs_no_evaluator(
 
     tied = (ActionValue(draw, (0.5,), 0.5), ActionValue(meld, (0.5,), 0.5))
     assert choose_temperature_action(tied, 0.0).action == draw
+
+
+def test_repetition_aware_selector_uses_bounded_decision_independent_paid_action_history() -> None:
+    agriculture = CardId.from_name("Agriculture")
+    machinery = CardId.from_name("Machinery")
+    repeated = DogmaAction(20, machinery)
+    alternative = DogmaAction(20, agriculture)
+    values = (
+        ActionValue(repeated, (0.70,), 0.70),
+        ActionValue(alternative, (0.61,), 0.61),
+    )
+    history = tuple(DogmaAction(index + 1, machinery) for index in range(9))
+
+    assert semantic_action_pattern(history[0]) == semantic_action_pattern(repeated)
+    assert choose_temperature_action(values, 0.0).action == repeated
+    assert len(history[-REPETITION_HISTORY_WINDOW:]) == 4
+    assert choose_repetition_aware_action(values, history, 0.0).action == alternative
+    stochastic = choose_repetition_aware_action(
+        values,
+        history,
+        0.2,
+        PolicyRngFactory(17, 0).for_decision(
+            game_id="repetition",
+            chooser=PlayerId.PLAYER_1,
+            decision_id=20,
+            domain=SelectionDomain.TEMPERATURE,
+        ),
+    )
+    assert stochastic in values
+
+
+def test_selector_version_dispatch_changes_choice_without_changing_reported_value() -> None:
+    machinery = CardId.from_name("Machinery")
+    draw = DrawAction(30)
+    dogma = DogmaAction(30, machinery)
+    routes = (
+        CandidateRoute("game", 30, dogma, 0, "value"),
+        CandidateRoute("game", 30, draw, 0, "value"),
+    )
+    expansion = CandidateExpansion(
+        (),
+        (),
+        (TerminalCandidate(routes[0], 0.70), TerminalCandidate(routes[1], 0.61)),
+    )
+
+    selection = select_expansion_action(
+        policy_id="policy-v2",
+        game_id="game",
+        decision_id=30,
+        legal_actions=(dogma, draw),
+        expansion=expansion,
+        evaluated_values=(),
+        temperature=0.0,
+        selector_version=REPETITION_AWARE_SELECTOR_VERSION,
+        recent_actions=tuple(DogmaAction(index + 1, machinery) for index in range(4)),
+    )
+
+    assert selection.action == draw
+    assert selection.mean_value == 0.61
+    with pytest.raises(ValueError, match="unsupported selector version"):
+        select_expansion_action(
+            policy_id="policy-invalid",
+            game_id="game",
+            decision_id=30,
+            legal_actions=(dogma, draw),
+            expansion=expansion,
+            evaluated_values=(),
+            temperature=0.0,
+            selector_version="unknown-selector-v1",
+        )
 
 
 def test_policy_rng_is_per_decision_and_rebatch_invariant() -> None:

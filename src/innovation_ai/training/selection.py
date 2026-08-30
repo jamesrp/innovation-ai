@@ -21,6 +21,10 @@ from innovation_ai.innovation.types import PlayerId
 
 SELECTION_RNG_VERSION = "sha256-domain-separated-v1"
 SELECTOR_VERSION = "temperature-softmax-v1"
+REPETITION_AWARE_SELECTOR_VERSION = "recent-paid-action-penalty-v1"
+REPETITION_HISTORY_WINDOW = 4
+REPETITION_PENALTY_PER_MATCH = 0.05
+SUPPORTED_SELECTOR_VERSIONS = frozenset({SELECTOR_VERSION, REPETITION_AWARE_SELECTOR_VERSION})
 
 
 class SelectionError(ValueError):
@@ -304,6 +308,67 @@ def choose_temperature_action(
     return candidates[-1]
 
 
+def _selector_score(item: ActionValue, recent_actions: Sequence[SemanticAction]) -> float:
+    """Return the bounded repetition-adjusted score for one semantic action."""
+
+    pattern = semantic_action_pattern(item.action)
+    matches = sum(
+        semantic_action_pattern(action) == pattern
+        for action in tuple(recent_actions)[-REPETITION_HISTORY_WINDOW:]
+    )
+    return item.mean_value - REPETITION_PENALTY_PER_MATCH * matches
+
+
+def semantic_action_pattern(action: SemanticAction) -> tuple[tuple[str, object], ...]:
+    """Return decision-ID-independent semantic fields used for repetition matching."""
+
+    from innovation_ai.innovation.actions import action_payload
+
+    payload = dict(action_payload(action))
+    payload.pop("decision_id", None)
+    payload.pop("schema_version", None)
+    return tuple(sorted(payload.items()))
+
+
+def choose_repetition_aware_action(
+    action_values: Sequence[ActionValue],
+    recent_actions: Sequence[SemanticAction],
+    temperature: float,
+    rng: DecisionRng | None = None,
+) -> ActionValue:
+    """Choose after a fixed bounded penalty for recently repeated paid actions."""
+
+    candidates = tuple(action_values)
+    if not candidates:
+        raise SelectionError("repetition-aware selection requires candidate values")
+    if isinstance(temperature, bool):
+        raise SelectionError("temperature must be numeric")
+    scalar_temperature = float(temperature)
+    if not math.isfinite(scalar_temperature) or scalar_temperature < 0.0:
+        raise SelectionError("temperature must be finite and non-negative")
+    scores = tuple(_selector_score(item, recent_actions) for item in candidates)
+    if scalar_temperature == 0.0:
+        selected_index = 0
+        for index in range(1, len(candidates)):
+            if scores[index] > scores[selected_index]:
+                selected_index = index
+        return candidates[selected_index]
+    if rng is None:
+        raise SelectionError("positive-temperature selection requires a policy RNG")
+    maximum = max(scores)
+    weights = tuple(math.exp((score - maximum) / scalar_temperature) for score in scores)
+    total = sum(weights)
+    if not math.isfinite(total) or total <= 0.0:  # pragma: no cover - finite inputs guard this
+        raise SelectionError("repetition-aware softmax produced invalid weights")
+    threshold = rng.unit_interval() * total
+    cumulative = 0.0
+    for item, weight in zip(candidates, weights, strict=True):
+        cumulative += weight
+        if threshold < cumulative:
+            return item
+    return candidates[-1]
+
+
 def select_expansion_action(
     *,
     policy_id: str,
@@ -313,6 +378,8 @@ def select_expansion_action(
     expansion: CandidateExpansion,
     evaluated_values: Sequence[float],
     temperature: float,
+    selector_version: str = SELECTOR_VERSION,
+    recent_actions: Sequence[SemanticAction] = (),
     rng: DecisionRng | None = None,
 ) -> PolicySelection:
     """Turn trusted sampled afterstates into one auditable policy selection."""
@@ -327,7 +394,12 @@ def select_expansion_action(
             (candidate.route, candidate.utility) for candidate in expansion.terminal_candidates
         ),
     )
-    selected = choose_temperature_action(values, temperature, rng)
+    if selector_version == SELECTOR_VERSION:
+        selected = choose_temperature_action(values, temperature, rng)
+    elif selector_version == REPETITION_AWARE_SELECTOR_VERSION:
+        selected = choose_repetition_aware_action(values, recent_actions, temperature, rng)
+    else:
+        raise SelectionError(f"unsupported selector version {selector_version!r}")
     return PolicySelection(
         policy_id,
         game_id,
@@ -339,8 +411,12 @@ def select_expansion_action(
 
 
 __all__ = [
+    "REPETITION_AWARE_SELECTOR_VERSION",
+    "REPETITION_HISTORY_WINDOW",
+    "REPETITION_PENALTY_PER_MATCH",
     "SELECTION_RNG_VERSION",
     "SELECTOR_VERSION",
+    "SUPPORTED_SELECTOR_VERSIONS",
     "ActionValue",
     "DecisionRng",
     "PolicyRngFactory",
@@ -349,6 +425,8 @@ __all__ = [
     "SelectionRngError",
     "aggregate_candidate_values",
     "aggregate_expansion_values",
+    "choose_repetition_aware_action",
     "choose_temperature_action",
     "select_expansion_action",
+    "semantic_action_pattern",
 ]

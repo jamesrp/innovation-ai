@@ -256,11 +256,11 @@ Unless pilot evidence forces a separate project decision, Milestone 3 does not i
 - [x] Canonical JSON and Markdown experiment summary produced.
 - [x] Zero sampler/replay/integrity failures in generated training data.
 - [x] Held-out metrics compared with a trivial reference.
-- [ ] 25-pair random and heuristic preflights completed without ceiling failures. Random completed;
-      heuristic seed 50000 hit the 10,000-action ceiling.
+- [x] 25-pair random and heuristic preflights completed without ceiling failures under the
+      versioned `recent-paid-action-penalty-v1` policy selector on August 30, 2026.
 - [x] Seat/reason/length/calibration diagnostics reviewed.
-- [ ] One controlled follow-up experiment completed.
-- [ ] Scale/promotion recommendation written with evidence.
+- [x] One controlled follow-up experiment completed: versioned bounded repetition awareness.
+- [x] Scale/promotion recommendation written with evidence.
 - [ ] `make check` passes.
 - [ ] Relevant optional fuzz/soak rerun if sampler/engine contracts changed.
 - [ ] Focused commits pushed to `origin`.

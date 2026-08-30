@@ -284,8 +284,10 @@ class ArenaRunner:
                     }
                 )
 
+            policy_schedule = None
             if scheduler is not None:
-                submissions = list(scheduler.schedule(runner).submissions)
+                policy_schedule = scheduler.schedule(runner)
+                submissions = list(policy_schedule.submissions)
             else:
                 submissions = [
                     Submission(
@@ -301,6 +303,9 @@ class ArenaRunner:
                     "arena policy routing did not answer every pending decision"
                 )
             runner.submit(submissions)
+            if scheduler is not None:
+                assert policy_schedule is not None
+                scheduler.record_committed(policy_schedule)
             for submission in submissions:
                 submitted_actions[submission.game_id] += 1
                 action_tails[submission.game_id].append(

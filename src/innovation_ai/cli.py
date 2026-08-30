@@ -665,10 +665,12 @@ def _arena(args: argparse.Namespace) -> int:
     from innovation_ai.training.checkpoint import load_policy_descriptor
     from innovation_ai.training.inference import FrozenEvaluatorCache
 
+    candidate = load_policy_descriptor(args.candidate_policy)
     candidate = replace(
-        load_policy_descriptor(args.candidate_policy),
+        candidate,
         temperature=0.0,
         determinization_count=args.determinizations,
+        selector_version=args.selector_version or candidate.selector_version,
     )
     policies: dict[str, ArenaPolicyDescriptor] = {
         candidate.policy_id: ArenaPolicyDescriptor(
@@ -1172,6 +1174,11 @@ def build_parser() -> argparse.ArgumentParser:
     arena.add_argument("--seed-start", type=int, default=50_000)
     arena.add_argument("--seed-pairs", type=int, default=200)
     arena.add_argument("--determinizations", type=int, default=4)
+    arena.add_argument(
+        "--selector-version",
+        choices=("temperature-softmax-v1", "recent-paid-action-penalty-v1"),
+        help="override the candidate selector and derive a distinct policy identity",
+    )
     arena.add_argument("--bootstrap-seed", type=int, default=0)
     arena.add_argument("--max-actions", type=int, default=10_000)
     arena.add_argument("--output", type=Path, required=True)

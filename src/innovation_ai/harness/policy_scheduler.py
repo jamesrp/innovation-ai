@@ -9,7 +9,7 @@ candidate expansion is performed solely on sampled reconstructed states.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -23,7 +23,7 @@ from innovation_ai.harness.afterstates import (
 )
 from innovation_ai.harness.policy import BatchValueEvaluator, PolicySelection
 from innovation_ai.harness.runner import PendingGameDecision, PullGameRunner, Submission
-from innovation_ai.innovation.actions import DecisionKind
+from innovation_ai.innovation.actions import DecisionKind, SemanticAction
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.state import GameState
 from innovation_ai.innovation.types import PlayerId
@@ -40,8 +40,10 @@ from innovation_ai.training.determinizations import (
     InformationSetSpecBuilder,
 )
 from innovation_ai.training.selection import (
+    REPETITION_AWARE_SELECTOR_VERSION,
+    REPETITION_HISTORY_WINDOW,
     SELECTION_RNG_VERSION,
-    SELECTOR_VERSION,
+    SUPPORTED_SELECTOR_VERSIONS,
     PolicyRngFactory,
     SelectionDomain,
     SelectionError,
@@ -97,7 +99,9 @@ class LearnedPolicyAssignment:
             raise ValueError("policy uses an unsupported information-set sampler version")
         if self.descriptor.sampler_rng_version != DEFAULT_SAMPLER_RNG_VERSION:
             raise ValueError("policy uses an unsupported sampler derivation RNG version")
-        if self.descriptor.selector_version not in {SELECTOR_VERSION, DEFAULT_SELECTOR_VERSION}:
+        if self.descriptor.selector_version not in SUPPORTED_SELECTOR_VERSIONS | {
+            DEFAULT_SELECTOR_VERSION
+        }:
             raise ValueError("policy uses an unsupported selection version")
         if self.descriptor.selector_rng_version not in {
             SELECTION_RNG_VERSION,
@@ -111,6 +115,7 @@ class PolicyDecisionAudit:
     """One submission plus auditable learned/fallback provenance."""
 
     submission: Submission
+    chooser: PlayerId
     selection: PolicySelection | None
     handling: str
     failure: PolicySchedulerError | None = None
@@ -202,6 +207,8 @@ class PolicyScheduler:
         self._expander = TrustedCandidateExpander(self._registry)
         self._rng_factory = PolicyRngFactory(run_seed, generation)
         self._sampler_factory = sampler_factory or self._default_sampler
+        self._recent_paid_actions: dict[tuple[str, PlayerId, str], deque[SemanticAction]] = {}
+        self._recorded_learned_decisions: set[tuple[str, int]] = set()
 
     def _default_sampler(self, seed: bytes) -> InformationSetSampler:
         # Strict sampler errors are caught below so scheduler policy, rather than
@@ -268,6 +275,8 @@ class PolicyScheduler:
                     expansion=item.expansion,
                     evaluated_values=evaluated,
                     temperature=item.assignment.descriptor.temperature,
+                    selector_version=item.assignment.descriptor.selector_version,
+                    recent_actions=self._recent_actions_for(item),
                     rng=(
                         None
                         if item.assignment.descriptor.temperature == 0.0
@@ -285,7 +294,12 @@ class PolicyScheduler:
                     f"invalid learned selection for {key[0]!r} decision {key[1]}: {error}"
                 ) from error
             submission = Submission(item.request.game_id, selection.action)
-            learned_audits[key] = PolicyDecisionAudit(submission, selection, "learned")
+            learned_audits[key] = PolicyDecisionAudit(
+                submission,
+                item.request.decision.chooser,
+                selection,
+                "learned",
+            )
 
         audits = tuple(
             learned_audits.get((request.game_id, request.decision.decision_id))
@@ -303,7 +317,43 @@ class PolicyScheduler:
 
         schedule = self.schedule(runner)
         runner.submit(schedule.submissions)
+        self.record_committed(schedule)
         return schedule
+
+    def record_committed(self, schedule: PolicySchedule) -> None:
+        """Record a successfully committed schedule for stateful selector history."""
+
+        for audit in schedule.audits:
+            if audit.selection is None:
+                continue
+            assignment = self._assignment_for(audit.submission.game_id, audit.chooser)
+            if assignment is None:
+                raise PolicySchedulerError("committed learned audit has no policy assignment")
+            if assignment.descriptor.selector_version != REPETITION_AWARE_SELECTOR_VERSION:
+                continue
+            decision_key = (
+                audit.submission.game_id,
+                audit.submission.action.decision_id,
+            )
+            if decision_key in self._recorded_learned_decisions:
+                continue
+            self._recorded_learned_decisions.add(decision_key)
+            key = (audit.submission.game_id, audit.chooser, assignment.descriptor.policy_id)
+            history = self._recent_paid_actions.setdefault(
+                key, deque(maxlen=REPETITION_HISTORY_WINDOW)
+            )
+            history.append(audit.submission.action)
+
+    def _recent_actions_for(self, item: _LearnedPending) -> tuple[SemanticAction, ...]:
+        descriptor = item.assignment.descriptor
+        if descriptor.selector_version != REPETITION_AWARE_SELECTOR_VERSION:
+            return ()
+        key = (
+            item.request.game_id,
+            item.request.decision.chooser,
+            descriptor.policy_id,
+        )
+        return tuple(self._recent_paid_actions.get(key, ()))
 
     def _assignment_for(self, game_id: str, chooser: PlayerId) -> LearnedPolicyAssignment | None:
         seat_assignment = self._assignments.get((game_id, chooser))
@@ -383,7 +433,13 @@ class PolicyScheduler:
                 f"heuristic returned an illegal action for {request.game_id!r} "
                 f"decision {request.decision.decision_id}"
             )
-        return PolicyDecisionAudit(Submission(request.game_id, action), None, handling, failure)
+        return PolicyDecisionAudit(
+            Submission(request.game_id, action),
+            request.decision.chooser,
+            None,
+            handling,
+            failure,
+        )
 
     def _evaluate_pending(
         self,

@@ -427,9 +427,9 @@ def _provenance(
         manifest.config.generation,
         seats,
         ExplorationProvenance(
-            "temperature-softmax-v1",
+            "temperature-softmax-v1" if learned is None else learned.selector_version,
             0.0 if learned is None else learned.temperature,
-            "sha256-domain-separated-v1",
+            "sha256-domain-separated-v1" if learned is None else learned.selector_rng_version,
         ),
         DeterminizationProvenance(
             "information-set-sampler-v1",
@@ -632,6 +632,7 @@ def _run_shard_active(
                 }
             )
         pool.submit(schedule.submissions)
+        scheduler.record_committed(schedule)
     write_compact_replay_shard(path, shard, episodes)
 
 

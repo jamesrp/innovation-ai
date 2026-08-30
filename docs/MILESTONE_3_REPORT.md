@@ -1,7 +1,8 @@
 # Milestone 3 implementation and pilot report
 
-**Status:** pilot completed August 29, 2026; promotion-scale work is blocked pending a
-policy-level cycle decision.
+**Status:** pilot and repetition-aware policy preflight completed August 30, 2026; the original
+policy cycle is resolved by a versioned selector experiment, while promotion-scale work remains
+pending.
 
 ## Implementation delivered
 
@@ -141,3 +142,49 @@ same seed-50000 heuristic reproduction first, then the unchanged 25-pair preflig
 is a versioned deterministic tie-break/diversification rule, but merely raising the action ceiling
 or declaring the game a draw is not acceptable. In parallel, profile why the arena achieves only
 about one action/s at four determinizations before scheduling another 100-game preflight.
+
+## Repetition-aware selector experiment
+
+**Completed August 30, 2026.** The controlled policy-layer change is
+`recent-paid-action-penalty-v1`. It leaves the checkpoint, encoder, value aggregation,
+determinizations, engine, and legal-action set unchanged. For each learned physical seat, the
+selector retains only the last four committed paid actions. It compares semantic action patterns
+without decision IDs and subtracts **0.05 per matching recent action** from the value used for
+selection, for a maximum penalty of **0.20**. The original model mean remains the reported
+selection value. The selector version is already part of the content-derived policy descriptor,
+so this produces a new policy identity without changing checkpoint identity.
+
+History advances only after the runner successfully commits a schedule. Repeated scheduling before
+submission is therefore stable, and committed-decision recording is idempotent. Setup and nested
+effect choices remain heuristic fallbacks and do not enter the paid-action history. The arena CLI
+can derive the versioned policy with:
+
+```text
+--selector-version recent-paid-action-penalty-v1
+```
+
+The exact failed reproduction—heuristic opponent, setup seed **50000**, four determinizations,
+temperature zero, and the original candidate checkpoint—completed both seat-swapped games in
+**59** and **135** actions. The derived policy ID is
+`sha256:e1dcca55aaeb4fec502019c7b590ef49883ff4f375172414813bf930758bc1e9`.
+
+The unchanged 25-pair random/heuristic preflight then completed all **100 games** with zero sampler
+or action-ceiling failures:
+
+| opponent | W/D/L | utility | paired 95% interval | P1 W/D/L | P2 W/D/L | length mean/min/max |
+|---|---:|---:|---:|---:|---:|---:|
+| random | 46/0/4 | 0.920 | [0.840, 0.980] | 23/0/2 | 23/0/2 | 185.9/120/353 |
+| heuristic | 43/0/7 | 0.860 | [0.760, 0.940] | 22/0/3 | 21/0/4 | 197.1/93/606 |
+| combined | 89/0/11 | 0.890 | [0.830, 0.950] | 45/0/5 | 44/0/6 | 191.5/93/606 |
+
+The run processed 19,147 actions in 478.8 seconds (**39.99 actions/s**) with peak RSS of about
+274 MiB. This clears the Milestone 3 completion blocker and strongly supports retaining the
+selector as a policy variant, but the preflight remains diagnostic rather than a promotion claim.
+A promotion arena still requires a predeclared incumbent comparison under the normal 200-pair
+criterion.
+
+**Recommendation:** retain this selector variant as the evaluation candidate and, if no compatible
+champion exists, use the documented non-statistical bootstrap-champion path. A predeclared
+200-pair candidate/incumbent arena is now technically unblocked. Continue the no-go on a larger
+training-data run until the pilot's materialization-memory margin is improved; more data is not
+needed to validate this policy-layer result.
