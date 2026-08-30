@@ -20,11 +20,22 @@ from innovation_ai.training.determinizations import (
     SYNTHETIC_SETUP_SEED,
     HiddenAllocationKind,
     InformationSetSampler,
+    InformationSetSpec,
     InformationSetSpecBuilder,
     UnsupportedInformationSet,
     verify_sampled_state,
 )
 from innovation_ai.training.encoding import FlatObservationEncoder
+
+
+class _CountingSampler(InformationSetSampler):
+    def __init__(self) -> None:
+        super().__init__(seed="count-validations")
+        self.validation_calls = 0
+
+    def _validate_spec(self, spec: InformationSetSpec) -> None:
+        self.validation_calls += 1
+        super()._validate_spec(spec)
 
 
 def _stable_state(*, splayed: bool = False, paid_actions: int = 2) -> GameState:
@@ -103,6 +114,16 @@ def test_hidden_equivalent_specs_samples_and_candidate_features_are_identical() 
         encoder.encode_batch(first_expansion.positions),
         encoder.encode_batch(second_expansion.positions),
     )
+
+
+def test_sample_many_validates_shared_spec_once() -> None:
+    spec = InformationSetSpecBuilder().build(_stable_state())
+    sampler = _CountingSampler()
+
+    samples = sampler.sample_many(spec, 4)
+
+    assert all(sample is not None for sample in samples)
+    assert sampler.validation_calls == 1
 
 
 def test_sample_preserves_observation_legal_actions_splays_and_synthetic_provenance() -> None:

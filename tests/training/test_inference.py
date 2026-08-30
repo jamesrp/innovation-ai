@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
+from numpy.typing import NDArray
 
 from innovation_ai.harness.policy import CandidateRoute, ValuePosition, build_current_value_position
 from innovation_ai.innovation.actions import DrawAction
@@ -29,6 +31,16 @@ def _position() -> ValuePosition:
     decision = current_decision(state)
     assert decision is not None
     return build_current_value_position(state, decision)
+
+
+class _CountingEncoder(FlatObservationEncoder):
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_sizes: list[int] = []
+
+    def encode_batch(self, positions: tuple[ValuePosition, ...]) -> NDArray[np.float32]:
+        self.batch_sizes.append(len(positions))
+        return super().encode_batch(positions)
 
 
 class _InferenceProbe(ValueNetwork):
@@ -70,6 +82,21 @@ def test_cpu_evaluator_microbatches_in_inference_mode_and_matches_scalar_calls()
     assert all(0.0 <= value <= 1.0 for value in batched)
     assert all(not parameter.requires_grad for parameter in model.parameters())
     assert evaluator.evaluate(()) == ()
+
+
+def test_cpu_evaluator_scores_equal_positions_once_per_batch() -> None:
+    encoder = _CountingEncoder()
+    evaluator = CpuBatchValueEvaluator(
+        _constant_network(encoder.manifest.input_dimension, 0.0),
+        encoder,
+        CpuEvaluatorConfig(microbatch_size=2, torch_num_threads=1),
+    )
+    position = _position()
+
+    values = evaluator.evaluate((position, position, position))
+
+    assert values == pytest.approx((0.5, 0.5, 0.5), abs=1e-7)
+    assert encoder.batch_sizes == [1]
 
 
 def test_frozen_cache_routes_two_checkpoint_policies_without_cross_contamination(

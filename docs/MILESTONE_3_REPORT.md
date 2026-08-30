@@ -81,11 +81,50 @@ A separate 25-pair random-only preflight completed all **50 games** on August 30
 - sampler/action-ceiling failures: **0/0**.
 
 The near-balanced seat split is reassuring, and the candidate is competitive with random on this
-small diagnostic set, but the interval includes 0.5 and this is not a promotion claim. The run took
-11,441 seconds for only 10,945 actions (**0.96 actions/s**), making four-determinization arena
-execution a second scaling problem independent of the policy cycle. The failed combined run and the
-successful random-only run together count as two arena attempts; no controlled training-variable
-comparison was started after the stop condition.
+small diagnostic set, but the interval includes 0.5 and this is not a promotion claim. The original
+run took 11,441 seconds for only 10,945 actions (**0.96 actions/s**), making four-determinization
+arena execution an apparent second scaling problem independent of the policy cycle. The failed
+combined run and the successful random-only run together count as two arena attempts; no controlled
+training-variable comparison was started after the stop condition.
+
+## Arena throughput profiling follow-up
+
+**Profiled August 30, 2026.** The original random preflight's 0.96 actions/s was not reproduced by
+smaller fixed-seed reruns on the same checkout. Before optimization, the first four seed pairs
+completed at 44.15 actions/s and the first eight at 26.84 actions/s. The decline with the larger
+all-in-flight arena is real, but the smaller measurements do not explain the earlier
+11,441-second wall time. It should not be treated as the current steady-state cost without a fresh
+full rerun.
+
+A four-pair `cProfile` run attributed the largest cumulative costs to sampled candidate expansion
+through the real effect engine (62.1 seconds), flat encoding (22.5 seconds), and information-set
+sampling (15.3 seconds). These totals overlap, but they show that PyTorch's tiny value network is
+not the primary bottleneck. Four determinizations generated 11,840 model positions in that run,
+and many were equal public afterstates repeated across hidden-state samples.
+
+Two semantics-preserving changes were made:
+
+- `CpuBatchValueEvaluator` now encodes and scores equal `ValuePosition` objects once per evaluator
+  call, then restores values to the original candidate-route order. The profiled four-pair run
+  encoded 4,779 unique positions instead of 11,840, a 59.6% reduction.
+- `InformationSetSampler.sample_many` now validates the shared immutable specification and computes
+  its digest once, while retaining independent per-sample reconstruction and verification. The
+  trusted candidate expander still independently verifies every sampled state before applying any
+  hypothetical action.
+
+Fixed-seed before/after results were identical and throughput improved as follows:
+
+| fixed random arena | actions | before | after | improvement | after peak RSS |
+|---|---:|---:|---:|---:|---:|
+| 4 seed pairs / 8 games | 1,802 | 44.15 actions/s | 52.16 actions/s | 18.1% | 242 MiB |
+| 8 seed pairs / 16 games | 3,272 | 26.84 actions/s | 30.65 actions/s | 14.2% | 246 MiB |
+
+The four-pair profiled wall time fell from 98.6 to 85.1 seconds (13.7%), despite profiler overhead.
+The remaining dominant cost is exact one-ply expansion, especially dogma actions that execute many
+effect steps before reaching the immediate afterstate boundary. Further work should measure
+candidate counts and effect-step counts per game/decision, then target repeated observation and
+engine-boundary construction. It should not weaken sample verification or change the frozen
+encoder/model/policy semantics merely to improve the benchmark.
 
 ## Decision and next experiment
 

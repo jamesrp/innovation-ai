@@ -552,12 +552,23 @@ class InformationSetSampler:
         if sample_index < 0:
             raise ValueError("sample index cannot be negative")
         self._validate_spec(spec)
+        return self._sample_validated(spec, sample_index=sample_index, spec_digest=spec.digest)
+
+    def _sample_validated(
+        self,
+        spec: InformationSetSpec,
+        *,
+        sample_index: int,
+        spec_digest: str,
+    ) -> GameState | None:
+        """Sample after the shared information-set contract has been validated once."""
+
         failures: list[str] = []
         for attempt in range(self._retry_limit):
             rng = _Sha256Rng(
                 self._seed,
                 "sample",
-                spec.digest,
+                spec_digest,
                 str(sample_index),
                 str(attempt),
             )
@@ -584,7 +595,12 @@ class InformationSetSampler:
 
         if count < 0:
             raise ValueError("sample count cannot be negative")
-        return tuple(self.sample(spec, sample_index=index) for index in range(count))
+        self._validate_spec(spec)
+        spec_digest = spec.digest
+        return tuple(
+            self._sample_validated(spec, sample_index=index, spec_digest=spec_digest)
+            for index in range(count)
+        )
 
     def _validate_spec(self, spec: InformationSetSpec) -> None:
         registry = self._registry

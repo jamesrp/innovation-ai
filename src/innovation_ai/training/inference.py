@@ -58,6 +58,11 @@ class CpuBatchValueEvaluator:
     def evaluate(self, positions: Sequence[ValuePosition], /) -> tuple[float, ...]:
         """Encode and evaluate positions in bounded CPU microbatches.
 
+        Equal public positions are encoded and scored once per call, then expanded back to the
+        original route order. Arena determinizations often produce identical afterstates for
+        actions whose public outcome is independent of hidden-card allocation, so this avoids
+        repeated encoder and model work without changing candidate means.
+
         Outputs are checked for finite probability values before crossing the
         framework-free contract boundary.
         """
@@ -65,18 +70,28 @@ class CpuBatchValueEvaluator:
         batch = tuple(positions)
         if not batch:
             return ()
-        encoded = self.encoder.encode_batch(batch)
-        values: list[float] = []
+        unique_positions: list[ValuePosition] = []
+        unique_index: dict[ValuePosition, int] = {}
+        restore_indices: list[int] = []
+        for position in batch:
+            index = unique_index.get(position)
+            if index is None:
+                index = len(unique_positions)
+                unique_positions.append(position)
+                unique_index[position] = index
+            restore_indices.append(index)
+        encoded = self.encoder.encode_batch(tuple(unique_positions))
+        unique_values: list[float] = []
         with torch.inference_mode():
-            for start in range(0, len(batch), self.config.microbatch_size):
+            for start in range(0, len(unique_positions), self.config.microbatch_size):
                 features = torch.from_numpy(encoded[start : start + self.config.microbatch_size])
                 prediction = self.model.predict(features)
                 for value in prediction.tolist():
                     scalar = float(value)
                     if not math.isfinite(scalar) or not 0.0 <= scalar <= 1.0:
                         raise ValueError("value model returned a non-probability prediction")
-                    values.append(scalar)
-        return tuple(values)
+                    unique_values.append(scalar)
+        return tuple(unique_values[index] for index in restore_indices)
 
 
 def evaluate_candidate_routes(
