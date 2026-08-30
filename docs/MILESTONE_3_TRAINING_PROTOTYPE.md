@@ -252,12 +252,13 @@ Unless pilot evidence forces a separate project decision, Milestone 3 does not i
 
 ## 12. Milestone completion checklist
 
-- [ ] Medium pilot iteration completed and resumed/verifiable.
-- [ ] Canonical JSON and Markdown experiment summary produced.
-- [ ] Zero sampler/replay/integrity failures.
-- [ ] Held-out metrics compared with a trivial reference.
-- [ ] 25-pair random and heuristic preflights completed without ceiling failures.
-- [ ] Seat/reason/length/calibration diagnostics reviewed.
+- [x] Medium pilot iteration completed and resumability verified with the release smoke workflow.
+- [x] Canonical JSON and Markdown experiment summary produced.
+- [x] Zero sampler/replay/integrity failures in generated training data.
+- [x] Held-out metrics compared with a trivial reference.
+- [ ] 25-pair random and heuristic preflights completed without ceiling failures. Random completed;
+      heuristic seed 50000 hit the 10,000-action ceiling.
+- [x] Seat/reason/length/calibration diagnostics reviewed.
 - [ ] One controlled follow-up experiment completed.
 - [ ] Scale/promotion recommendation written with evidence.
 - [ ] `make check` passes.

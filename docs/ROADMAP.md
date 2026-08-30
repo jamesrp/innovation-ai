@@ -22,10 +22,11 @@ selection, frozen-checkpoint self-play, paired arena evaluation, and CPU profili
 ## Milestone 3 — current: training prototype
 
 Use the frozen Milestone 2 architecture for measured medium-scale training, deterministic arena
-preflights, cycle/completion diagnosis, and controlled one-variable experiments. Establish whether
-the current pipeline improves held-out value metrics and produces evaluable policies before
-changing the encoder, model architecture, information policy, or search method. See
-`docs/MILESTONE_3_TRAINING_PROTOTYPE.md`.
+preflights, cycle/completion diagnosis, and controlled one-variable experiments. The prescribed
+512/256 pilot completed on August 29, 2026 with healthy replay/data integrity and useful held-out
+learning, but its heuristic arena preflight exposed a reproducible 10,000-action policy cycle.
+Promotion-scale work is therefore paused for a policy-layer cycle decision. See
+`docs/MILESTONE_3_TRAINING_PROTOTYPE.md` and `docs/MILESTONE_3_REPORT.md`.
 
 ## Future information-memory policy
 
