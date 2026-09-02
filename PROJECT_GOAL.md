@@ -20,16 +20,20 @@ one-ply afterstate selection, frozen-checkpoint iterative self-play, paired aren
 CPU profiling. The implementation runs on the CPU-only exe.dev development box and preserves
 clean paths to parallel actors and GPU-backed training or inference.
 
-The next goal is to scale and strengthen that reproducible pipeline: increase self-play volume,
-tune the value baseline, introduce bounded parallel actors, and use paired arenas to decide which
-changes improve play before pursuing richer memory, belief, or search methods.
+The next goal is Milestone 4: replace the deliberately weak heuristic with bounded player-safe
+sampled minimax, use it as the learned policy's setup/effect continuation, add failure-focused
+selection and cycle traces, retrain under public board-card information, and rerun fixed paired
+arenas. The primary learned selector returns to `temperature-softmax-v1`; the repetition-aware
+selector remains an experimental comparator rather than the default candidate.
 
 Preserve the engine as an explicit state machine. Every player choice remains a semantic
 `Decision`, and applying one semantic `Action` advances to the next decision or terminal result.
 The engine never calls agents, parses card prose at runtime, or exposes model tensors. Learned
 components consume only versioned player-safe observations and public decision context; trusted
 orchestration may operate the engine but must not allow candidate evaluation to exploit hidden
-deck order, achievements, hands, covered cards, or secret setup choices.
+deck order, achievements, hands, score identities, or secret setup choices. Beginning in Milestone
+4, the project deliberately uses `public-covered-v1`: every ordered board-card identity is public
+even when unsplayed, while splay geometry alone determines functional visible icons.
 
 Keep rules execution, observation and public-context construction, encoding, model definition,
 training, inference, self-play orchestration, replay storage, evaluation, and profiling loosely

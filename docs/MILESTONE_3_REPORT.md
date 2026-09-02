@@ -1,8 +1,9 @@
 # Milestone 3 implementation and pilot report
 
-**Status:** pilot and repetition-aware policy preflight completed August 30, 2026; the original
-policy cycle is resolved by a versioned selector experiment, while promotion-scale work remains
-pending.
+**Status:** pilot and repetition-aware policy preflight completed August 30, 2026. The selector
+variant avoided the observed action ceiling, but did not establish the original cycle's root cause.
+Its recommendation as the primary evaluation candidate was superseded by the Milestone 4 project
+decision on September 2, 2026; see the final status note below.
 
 ## Implementation delivered
 
@@ -188,3 +189,19 @@ champion exists, use the documented non-statistical bootstrap-champion path. A p
 200-pair candidate/incumbent arena is now technically unblocked. Continue the no-go on a larger
 training-data run until the pilot's materialization-memory margin is improved; more data is not
 needed to validate this policy-layer result.
+
+## Superseding Milestone 4 decision
+
+**Recorded September 2, 2026.** The project retains `recent-paid-action-penalty-v1` and all of its
+Milestone 3 evidence as an immutable experimental variant, but does not adopt it as the primary
+candidate or implicit incumbent. The primary learned-policy line returns to
+`temperature-softmax-v1`.
+
+The next milestone first strengthens the deliberately simple heuristic into a player-safe sampled
+minimax policy, uses it for the heuristic baseline and learned setup/effect fallback, adopts
+`public-covered-v1`, and adds complete failure-focused reproduction traces. It will reproduce the
+original seed-50000 failure under its exact historical policy before changing that behavior, then
+run a fresh training and evaluation sequence under the new complete policy identity. The successful
+repetition-aware preflight shows that the variant avoided the observed failure; it is not treated as
+proof that the original selector's root cause was repaired or that the original policy was
+promotion-ready. See `docs/MILESTONE_4_PLAN.md`.

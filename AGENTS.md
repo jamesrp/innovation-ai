@@ -3,11 +3,13 @@
 ## Project purpose and current milestone
 
 This repository implements **Innovation (base game, Third Edition), two players**, and is building
-toward a strong self-play-trained Innovation AI. **Milestones 1 and 2 are complete:** the
-deterministic engine covers all 105 supplied cards, and the first learned-value pipeline includes
-encoder v1, compact replay training, information-safe afterstates, frozen self-play, paired arenas,
-and CPU profiling. **Milestone 3 is the current training prototype:** run measured medium-scale
-training and arena preflights before changing the frozen encoder/model contracts.
+toward a strong self-play-trained Innovation AI. **Milestones 1–3 are complete:** the deterministic
+engine covers all 105 supplied cards, the first learned-value pipeline includes encoder v1, compact
+replay training, information-safe afterstates, frozen self-play, paired arenas, and CPU profiling,
+and the first measured training pilot exposed and diagnosed a deterministic policy cycle.
+**Milestone 4 is current:** build a player-safe sampled minimax heuristic, adopt public board-card
+information, harden pathological-game observability, restore temperature softmax as the primary
+learned selector, retrain, and reevaluate.
 
 Read these before changing engine or ML behavior:
 
@@ -19,7 +21,10 @@ Read these before changing engine or ML behavior:
 5. `docs/MILESTONE_1_PLAN.md` — completed engine implementation contracts and history.
 6. `docs/MILESTONE_2_PLAN.md` — completed first learned-value milestone contracts and gates.
 7. `docs/MILESTONE_2_REPORT.md` — implementation evidence, commands, profiling, and limitations.
-8. `docs/MILESTONE_3_TRAINING_PROTOTYPE.md` — current experiment sequence, gates, and handoff.
+8. `docs/MILESTONE_3_TRAINING_PROTOTYPE.md` — completed measured-pilot experiment sequence.
+9. `docs/MILESTONE_3_REPORT.md` — pilot, cycle, selector experiment, profiling, and limitations.
+10. `docs/MILESTONE_4_PLAN.md` — current sampled-search heuristic, observability, retraining, and
+    evaluation plan.
 
 Do not silently resolve a rules ambiguity. Record the interpretation and a focused test; if
 it materially changes gameplay or observations, request a project decision first.

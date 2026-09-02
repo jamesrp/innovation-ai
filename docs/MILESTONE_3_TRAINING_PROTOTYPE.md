@@ -1,8 +1,8 @@
 # Milestone 3 Plan — Training Prototype
 
-**Planning status (August 29, 2026):** ready for execution. Milestones 1 and 2 are complete. This
-milestone uses the frozen Milestone 2 pipeline to establish the first serious, measured training
-baseline before changing the encoder, network architecture, information policy, or search method.
+**Planning status (September 2, 2026):** complete. Milestones 1 and 2 supplied the frozen
+starting point; this milestone executed the first serious measured training baseline and its
+controlled selector follow-up. Historical commands and gates remain below for reproducibility.
 
 ## 1. Milestone outcome
 
@@ -261,6 +261,7 @@ Unless pilot evidence forces a separate project decision, Milestone 3 does not i
 - [x] Seat/reason/length/calibration diagnostics reviewed.
 - [x] One controlled follow-up experiment completed: versioned bounded repetition awareness.
 - [x] Scale/promotion recommendation written with evidence.
-- [ ] `make check` passes.
-- [ ] Relevant optional fuzz/soak rerun if sampler/engine contracts changed.
-- [ ] Focused commits pushed to `origin`.
+- [x] `make check` passes (785 passed, 1 skipped on September 2, 2026).
+- [x] Optional fuzz/soak rerun not required for the selector experiment because sampler and engine
+      contracts did not change.
+- [x] Milestone 3 implementation commits pushed to `origin` before Milestone 4 planning began.
