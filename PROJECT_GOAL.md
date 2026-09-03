@@ -24,11 +24,13 @@ Milestone 4's safe implementation foundation is now present: bounded root-sample
 player-safe setup/effect determinizations, public board-card information, schema-v2 search-aware
 policy identities, scheduler/generation/arena routing, strategic-cycle keys, and complete private
 failure traces. The exact historical seed-50000 cycle has been reproduced and explained. The
-September 3, 2026 feasibility corpus found that the approved exhaustive 4/3/4 completed-turn
-horizon misses its cutoff and throughput gates even at the provisional budget, so training and
-strength arenas are stopped pending a project decision on horizon, selective search, or compute;
-see `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. The primary learned selector remains
-`temperature-softmax-v1`; the repetition-aware selector remains an experimental comparator.
+September 3, 2026 feasibility corpus found that the original exhaustive 4/3/4 completed-turn
+horizon misses its cutoff and throughput gates even at the provisional budget. The owner then
+replaced that horizon with one completed player turn for every search root and explicitly rejected
+selective continuation. The next step is to re-benchmark and freeze the one-turn descriptor before
+training or strength arenas; see `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. The primary learned
+selector remains `temperature-softmax-v1`; the repetition-aware selector remains an experimental
+comparator.
 
 Preserve the engine as an explicit state machine. Every player choice remains a semantic
 `Decision`, and applying one semantic `Action` advances to the next decision or terminal result.

@@ -1,12 +1,41 @@
 # Milestone 4 feasibility and diagnostic addendum
 
 **Date:** September 3, 2026  
-**Status:** Work Package 0 feasibility gate failed; Work Package 1 historical reproduction
-completed. Search, safe information sets, public-covered compatibility, scheduler integration, and
-private traces are implemented, but the approved training/evaluation sequence is stopped before
-strength experiments.
+**Status:** the original Work Package 0 4/3/4-turn feasibility gate failed and Work Package 1's
+historical reproduction completed. On September 3, 2026, the project owner superseded the original
+horizon with one completed player turn for every search root and explicitly rejected selective
+choose-two continuation. The original measurements below remain historical evidence; the revised
+one-turn descriptor awaits its production-budget feasibility rerun.
 
-## Frozen pre-strength gates
+## Superseding one-turn decision
+
+**Owner decision, September 3, 2026:** replace the exhaustive 4/3/4 completed-turn horizon with an
+exhaustive **one completed-turn horizon for all paid-turn, pending-effect, and starting-meld roots**.
+Do not add choose-two, beam, or other selective continuation in Milestone 4. The rationale is that
+selecting future branches with the simple version-1 leaf evaluator would add another arbitrary
+approximation whose benefit has not been established.
+
+The search version is now `root-sampled-minimax-one-completed-turn-v1`; changing the horizon creates
+a new descriptor and policy identity. All real root actions, opponent Meld actions, nested effect
+choices, stable legal-order ties, common determinizations, route-local transpositions, and cycle
+cutoffs remain as specified. Only the completed-turn horizon changes.
+
+The current one-turn implementation default uses the still-provisional 400-transition,
+one-determinization descriptor:
+
+```text
+sha256:a3de2116646c297b30b75e25fc4ab065ef1a0674f89b932eecd9ef5eea2b067e
+```
+
+Its budget and determinization count are not production-frozen; the next thread must replace this
+identity if the revised feasibility measurements select different values.
+
+The earlier 4/3/4 gates and measurements below are retained unchanged as historical evidence. The
+next implementation thread must rerun the committed corpus at one, two, and four determinizations,
+select and freeze a per-route budget under the same cutoff/throughput discipline, update the dated
+report with the new descriptor digest, and only then begin heuristic validation or training.
+
+## Frozen pre-strength gates for the original 4/3/4 experiment
 
 These thresholds were declared before any Milestone 4 playing-strength arena:
 
@@ -26,15 +55,15 @@ These thresholds were declared before any Milestone 4 playing-strength arena:
 The route cutoff thresholds are the binding Work Package 0 gates. Throughput cannot compensate for
 failing the requested complete-turn horizon.
 
-## Search contract implemented
+## Historical 4/3/4 search contract
 
-The content-addressed provisional descriptor is:
+The content-addressed historical provisional descriptor was:
 
 ```text
 sha256:96a44eb380c292b8fd8aae7cf005331b9cb6d37665366d0705ec6e4b7360bd7b
 ```
 
-It records:
+That descriptor recorded:
 
 - deterministic root-sampled minimax;
 - the exact `hand-engineered-leaf-v1` formula;
@@ -48,8 +77,7 @@ It records:
 - route-local, exact-only transposition entries keyed by `strategic-state-v1`; and
 - path-local repeated strategic positions cut to the leaf evaluator, never converted to draws.
 
-The descriptor remains **provisional rather than training-approved** because it fails the frozen
-feasibility gates below.
+That descriptor was never training-approved because it failed the frozen feasibility gates below.
 
 ## Representative feasibility corpus
 
@@ -149,10 +177,13 @@ The trace answers the original diagnostic questions:
 
 No failure was converted to a draw.
 
-## Stop decision
+## Historical 4/3/4 stop decision
 
-The approved plan says to stop rather than weaken search when the target two-round horizon exceeds
-the frozen cutoff gate. That stop condition is now met. Therefore this implementation does **not**:
+The original approved plan required a stop rather than weakening search when the two-round horizon
+exceeded the frozen cutoff gate. That historical stop condition was met. The owner has since changed
+the horizon to one completed turn, so the next step is a fresh one-turn feasibility run rather than
+one of the previously listed selective-search or larger-compute alternatives. Until that rerun
+passes, this implementation still does **not**:
 
 - freeze the provisional descriptor as the production heuristic;
 - run heuristic strength arenas;
@@ -160,8 +191,5 @@ the frozen cutoff gate. That stop condition is now met. Therefore this implement
 - publish a fresh checkpoint or primary runnable learned policy; or
 - make playing-strength claims.
 
-Proceeding requires a project decision to change at least one approved constraint: reduce the
-completed-turn horizon, adopt selective/beam/rollout search instead of exhaustive minimax over all
-legal continuations, or move generation/evaluation to substantially larger compute. The existing
-safe search implementation and diagnostics can support any of those follow-up experiments without
-exposing live authoritative state to a policy.
+The revised one-turn horizon is now the binding Milestone 4 direction. Production budget and
+determinization count remain intentionally unfrozen until the one-turn corpus is measured.

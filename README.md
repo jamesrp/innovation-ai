@@ -21,11 +21,12 @@ Milestone 4 implemented:
 - complete trusted-private compressed traces plus public redacted summaries; and
 - exact reproduction of the historical seed-50000 action-ceiling cycle.
 
-The September 3, 2026 representative feasibility sweep found that the approved exhaustive 4/3/4
+The September 3, 2026 representative feasibility sweep found that the original exhaustive 4/3/4
 completed-turn horizon had a 100% route-cutoff rate at the provisional 400-transition budget and
-was too slow for generation. Per the approved stop condition, fresh training and strength arenas
-have not started. See the feasibility addendum before changing search behavior or running a new
-iteration.
+was too slow for generation. The owner then replaced it with an exhaustive one completed-turn
+horizon and rejected selective continuation. Fresh training and strength arenas remain paused only
+until the one-turn corpus selects and freezes a production budget. See the feasibility addendum
+before running a new iteration.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`

@@ -34,9 +34,9 @@ from innovation_ai.search.information_sets import InformationSetSampler, Informa
 from innovation_ai.search.minimax import DeterministicSampledMinimax
 
 SEARCH_FEASIBILITY_SCHEMA_VERSION = 1
-FROZEN_ROOT_TURN_HORIZON = 4
-FROZEN_OPPONENT_TURN_HORIZON = 3
-FROZEN_STARTING_MELD_HORIZON = 4
+FROZEN_ROOT_TURN_HORIZON = 1
+FROZEN_OPPONENT_TURN_HORIZON = 1
+FROZEN_STARTING_MELD_HORIZON = 1
 
 _DEFAULT_CORPUS_NAMES = (
     "both-pending-starting-meld",
@@ -58,7 +58,7 @@ class SearchFeasibilityError(RuntimeError):
 class SearchFeasibilityConfig:
     """Deterministic benchmark inputs; the three search horizons are intentionally frozen."""
 
-    route_transition_budgets: tuple[int, ...] = (32, 128)
+    route_transition_budgets: tuple[int, ...] = (400, 800, 1600)
     determinization_counts: tuple[int, ...] = (1, 2, 4)
     corpus_names: tuple[str, ...] = _DEFAULT_CORPUS_NAMES
     corpus_seed: int = 4404
@@ -273,7 +273,7 @@ class SearchFeasibilityResult:
             "",
             f"Content digest: `{self.content_digest}`",
             "",
-            "Frozen horizons: root 4, opponent 3, starting meld 4 completed turns.",
+            "Frozen horizon: one completed player turn from every supported root.",
             "",
             (
                 "| corpus | category | budget | dets | actions | routes | nodes | transitions | "

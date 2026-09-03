@@ -21,7 +21,7 @@ PRODUCTION_ROUTE_TRANSITION_BUDGET = 400
 
 # These strings are policy identity, not prose labels.  Changing any search behavior requires a
 # new value (and therefore a new descriptor digest), even if the dataclass schema does not change.
-DEFAULT_SEARCH_VERSION = "root-sampled-minimax-complete-turn-v1"
+DEFAULT_SEARCH_VERSION = "root-sampled-minimax-one-completed-turn-v1"
 DEFAULT_EVALUATOR_VERSION = "hand-engineered-leaf-v1"
 DEFAULT_INFORMATION_SET_SPEC_VERSION = "player-safe-search-spec-v1"
 DEFAULT_SAMPLING_ALGORITHM = "fixed-count-root-determinization-v1"
@@ -72,8 +72,8 @@ class SearchDescriptor:
     """Complete content-addressed identity of one deterministic search policy.
 
     Every behavioral choice called out by the Milestone 4 plan is represented explicitly.  The
-    numeric defaults are provisional production constants from the feasibility spike; callers may
-    construct separate immutable descriptors for measured alternatives.
+    numeric defaults are the current one-turn feasibility candidate; callers may construct separate
+    immutable descriptors for measured budget and determinization alternatives.
     """
 
     search_version: str = DEFAULT_SEARCH_VERSION
@@ -83,9 +83,9 @@ class SearchDescriptor:
     hidden_allocation_algorithm: str = DEFAULT_HIDDEN_ALLOCATION_ALGORITHM
     sampler_seed_derivation: str = DEFAULT_SAMPLER_SEED_DERIVATION
     selector_seed_derivation: str = DEFAULT_SELECTOR_SEED_DERIVATION
-    root_turn_horizon: int = 4
-    opponent_turn_horizon: int = 3
-    starting_meld_horizon: int = 4
+    root_turn_horizon: int = 1
+    opponent_turn_horizon: int = 1
+    starting_meld_horizon: int = 1
     determinization_count: int = PRODUCTION_DETERMINIZATION_COUNT
     sample_aggregation: str = DEFAULT_SAMPLE_AGGREGATION
     route_transition_budget: int = PRODUCTION_ROUTE_TRANSITION_BUDGET

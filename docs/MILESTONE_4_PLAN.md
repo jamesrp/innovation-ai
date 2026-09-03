@@ -2,9 +2,10 @@
 
 **Implementation status (September 3, 2026):** the player-safe search stack, public-covered
 compatibility, schema-v2 policy identity, scheduler/generation/arena routing, and private traces are
-implemented. Work Package 1's exact seed-50000 reproduction is complete. The Work Package 0
-representative benchmark failed the predeclared horizon/cutoff/throughput gates, so training and
-strength evaluation are stopped pending a project decision. See
+implemented. Work Package 1's exact seed-50000 reproduction is complete. The original 4/3/4-turn
+benchmark failed its predeclared gates; on September 3, 2026 the owner replaced that horizon with a
+single completed-turn horizon and rejected selective continuation. The revised one-turn descriptor
+must now be re-benchmarked and frozen before training or strength evaluation. See
 `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`.
 
 **Planning status (September 2, 2026):** approved for implementation; no implementation work has
@@ -111,31 +112,16 @@ an agent or used directly to score hypothetical actions.
 
 ### 2.4 Search horizon
 
-Depth is measured by completed player turns, never by semantic-action count. Nested dogma choices,
-shared executions, demands, and automatic engine work are resolved inside the current turn.
+**Owner amendment (September 3, 2026):** use a short exhaustive horizon instead of selective
+continuation over the original two-round target. Depth remains measured by completed player turns,
+never semantic-action count.
 
-For a root decision during the root player's active turn, search through:
-
-```text
-remainder of root turn 0
-opponent turn 0
-root turn 1
-opponent turn 1
-MINIMAX ENDS
-```
-
-This is four completed player-turns, approximately two full rounds. For a root-player choice during
-an opponent turn, search through:
-
-```text
-remainder of opponent turn 0
-root turn 1
-opponent turn 1
-MINIMAX ENDS
-```
-
-This is three completed player-turns. The current partial turn counts. Terminal states stop
-immediately regardless of horizon.
+For every paid-turn or pending-effect root, search through the remainder of the **current active
+player's turn** and stop at the next completed turn boundary. The current partial turn counts. Thus
+all supported play roots use a horizon of one completed player turn, whether the root chooser is the
+active player or is choosing during the opponent's demand/shared execution. Nested dogma choices,
+shared executions, demands, and deterministic engine work are resolved inside that turn. Terminal
+states still stop immediately.
 
 Starting melds remain simultaneous secret submissions. When both choices are pending, one root
 starting-meld decision uses this sampled maximin aggregation:
@@ -154,13 +140,13 @@ opponent who knows their own hand but never sees the root's real pending submiss
 If one starting choice has already been committed and remains secret while the other chooser acts,
 the committed card is sampled as latent fixed history from the root observation; it is neither
 copied from live authoritative state nor reopened as a minimizer branch. After both choices resolve,
-starting-meld search covers the first four completed player turns, regardless of which player the
+starting-meld search covers the first **one completed player turn**, regardless of which player the
 starting-card ordering makes first player.
 
 ### 2.5 Search budget and determinism
 
-Two rounds are the target, not an assumption that every position is cheap. Before enabling the new
-heuristic for generation:
+One completed turn is the target, not an assumption that every position is cheap. Before enabling
+the new heuristic for generation:
 
 - benchmark representative early-, middle-, late-, demand-, sharing-, and high-branching positions;
 - measure legal branches, effect steps, nodes, transposition hits, determinizations, wall time, and
@@ -257,7 +243,7 @@ Before broad implementation:
 4. Prove that equivalent observations with different true hidden allocations produce identical
    search specifications and deterministic sampling distributions; root-known private identities
    remain fixed.
-5. Build a committed representative decision corpus and measure the target two-round horizon.
+5. Build a committed representative decision corpus and measure the target one-turn horizon.
 6. Publish the numeric cutoff-rate and throughput gates, then freeze the production per-route budget
    and determinization count before inspecting playing-strength results.
 
@@ -404,7 +390,7 @@ Stop and diagnose rather than weakening safety or silently reducing search if an
 - equivalent player observations produce search specifications conditioned on true hidden state;
 - pending-effect sampling cannot reproduce the root decision and legal actions;
 - search uses an action unavailable in the chooser's observation or synthetic state;
-- target two-round searches exceed the frozen numeric budget-cutoff gate;
+- target one-turn searches exceed the frozen numeric budget-cutoff gate;
 - heuristic arenas cycle, exceed action ceilings, or fall below the frozen throughput gate;
 - public-covered observations expose opponent hand/score identities, supply order, achievement
   identities, or secret setup choices beyond the configured reveal rules;
@@ -428,7 +414,8 @@ Milestone 4 does not initially include:
 ## 13. Completion checklist
 
 - [ ] Search descriptor, evaluator formula, horizon, sampling contract, and numeric feasibility
-      gates frozen. The contract and gates are frozen, but no production descriptor passed them.
+      gates frozen. The one-turn horizon is frozen; production budget/determinizations await the
+      revised feasibility run.
 - [x] `public-covered-v1` adopted with compatibility and non-leak tests.
 - [x] Original seed-50000 failure reproduced with a complete diagnostic trace.
 - [x] Stronger heuristic implemented for paid actions, setup, and effect choices.

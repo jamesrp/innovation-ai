@@ -17,6 +17,9 @@ from innovation_ai.search import (
 def test_search_descriptor_is_immutable_content_addressed_and_round_trips() -> None:
     descriptor = SearchDescriptor()
 
+    assert descriptor.root_turn_horizon == 1
+    assert descriptor.opponent_turn_horizon == 1
+    assert descriptor.starting_meld_horizon == 1
     assert descriptor.determinization_count == 1
     assert descriptor.route_transition_budget == 400
     assert descriptor.descriptor_id.startswith("sha256:")
