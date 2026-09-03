@@ -9,6 +9,7 @@ from innovation_ai.harness.afterstates import TrustedCandidateExpander
 from innovation_ai.innovation.actions import DrawAction
 from innovation_ai.innovation.observations import observe
 from innovation_ai.innovation.state import (
+    LEGACY_INFORMATION_POLICY_VERSION,
     EffectFrameState,
     ExplicitPlayerPosition,
     GameState,
@@ -114,6 +115,20 @@ def test_hidden_equivalent_specs_samples_and_candidate_features_are_identical() 
         encoder.encode_batch(first_expansion.positions),
         encoder.encode_batch(second_expansion.positions),
     )
+
+
+def test_sampler_accepts_legacy_policy_for_historical_reproduction() -> None:
+    legacy = replace(
+        _stable_state(),
+        information_policy_version=LEGACY_INFORMATION_POLICY_VERSION,
+    )
+    spec = InformationSetSpecBuilder().build(legacy)
+
+    sampled = InformationSetSampler(seed="legacy-reproduction").sample(spec)
+
+    assert sampled is not None
+    assert sampled.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
+    verify_sampled_state(spec, sampled)
 
 
 def test_sample_many_validates_shared_spec_once() -> None:

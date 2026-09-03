@@ -1361,6 +1361,9 @@ def _redacted_learned(payload: DiagnosticJsonObject | None) -> DiagnosticJsonObj
     return {
         "policy_id": payload["policy_id"],
         "temperature": payload["temperature"],
+        "selector_version": payload["selector_version"],
+        "sampler_seed_digest": payload["sampler_seed_digest"],
+        "selector_seed_digest": payload["selector_seed_digest"],
         "candidate_count": len(means),
         "determinization_count": len(cast(list[DiagnosticJsonValue], samples[0])) if samples else 0,
         "minimum_mean": min(means),
@@ -1403,6 +1406,9 @@ def _validate_learned_payload(payload: DiagnosticJsonObject | None, legal_count:
     expected = {
         "policy_id",
         "temperature",
+        "selector_version",
+        "sampler_seed_digest",
+        "selector_seed_digest",
         "sample_values",
         "mean_values",
         "selector_scores",
@@ -1434,6 +1440,14 @@ def _validate_learned_payload(payload: DiagnosticJsonObject | None, legal_count:
     if len(summary.mean_values) != legal_count:
         raise DiagnosticTraceSchemaError("learned telemetry does not align to legal actions")
     _nonempty(_string(payload["policy_id"], "learned.policy_id"), "learned policy ID")
+    _nonempty(
+        _string(payload["selector_version"], "learned.selector_version"),
+        "learned selector version",
+    )
+    for name in ("sampler_seed_digest", "selector_seed_digest"):
+        raw_digest = payload[name]
+        if raw_digest is not None:
+            _digest(_string(raw_digest, f"learned.{name}"), f"learned {name}")
     _finite(_number(payload["temperature"], "learned.temperature"), "learned temperature")
 
 

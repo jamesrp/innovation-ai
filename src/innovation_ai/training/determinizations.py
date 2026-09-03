@@ -39,8 +39,8 @@ from innovation_ai.innovation.observations import (
 )
 from innovation_ai.innovation.protocol import current_decision
 from innovation_ai.innovation.state import (
-    INFORMATION_POLICY_VERSION,
     RULES_VERSION,
+    SUPPORTED_INFORMATION_POLICY_VERSIONS,
     Board,
     ColorStack,
     GamePhase,
@@ -610,10 +610,7 @@ class InformationSetSampler:
             )
         if spec.rules_version != RULES_VERSION:
             raise InformationSetSpecError("information-set rules version is unsupported")
-        if spec.information_policy_version not in {
-            INFORMATION_POLICY_VERSION,
-            "public-covered-v1",
-        }:
+        if spec.information_policy_version not in SUPPORTED_INFORMATION_POLICY_VERSIONS:
             raise InformationSetSpecError("information-set policy version is unsupported")
         _validate_observation_shape(spec.observation, registry)
         _validate_achievement_observation(spec.observation)
