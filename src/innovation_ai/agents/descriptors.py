@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass
 from hashlib import sha256
 
+from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR
+
 type AgentParameter = str | int | bool | None
 AGENT_DESCRIPTOR_SCHEMA_VERSION = 1
 
@@ -67,4 +69,9 @@ RANDOM_AGENT_DESCRIPTOR = AgentDescriptor(
 SIMPLE_HEURISTIC_AGENT_DESCRIPTOR = AgentDescriptor(
     name="simple-heuristic",
     version="printed-card-observation-v1",
+)
+SAMPLED_MINIMAX_AGENT_DESCRIPTOR = AgentDescriptor(
+    name="sampled-minimax-heuristic",
+    version="v1",
+    parameters=(("search_descriptor_id", PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id),),
 )

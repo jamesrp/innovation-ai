@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from innovation_ai.agents.descriptors import (
     RANDOM_AGENT_DESCRIPTOR,
+    SAMPLED_MINIMAX_AGENT_DESCRIPTOR,
     SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
+    AgentDescriptor,
+)
+from innovation_ai.innovation.state import PUBLIC_COVERED_INFORMATION_POLICY_VERSION
+from innovation_ai.search.contracts import SearchDescriptor
+from innovation_ai.training.checkpoint import PolicyDescriptor
+from innovation_ai.training.compact_replay import (
+    CompactReplayShardManifest,
+    read_compact_replay_shard,
 )
 from innovation_ai.training.self_play import (
     GenerationConfig,
@@ -117,6 +127,138 @@ def test_bootstrap_generation_seals_and_resumes_without_duplicates(tmp_path: Pat
     first = shard.read_bytes()
     assert run_generation(tmp_path, manifest) == ("shard-00000",)
     assert shard.read_bytes() == first
+
+
+def test_search_baseline_generation_uses_supplied_descriptor_and_records_provenance(
+    tmp_path: Path,
+) -> None:
+    search_descriptor = SearchDescriptor(
+        root_turn_horizon=1,
+        opponent_turn_horizon=1,
+        starting_meld_horizon=1,
+        determinization_count=1,
+        route_transition_budget=1,
+    )
+    baseline_descriptor = AgentDescriptor(
+        SAMPLED_MINIMAX_AGENT_DESCRIPTOR.name,
+        SAMPLED_MINIMAX_AGENT_DESCRIPTOR.version,
+        (("search_descriptor_id", search_descriptor.descriptor_id),),
+    )
+    search = SeatPolicy(
+        baseline_descriptor.descriptor_id,
+        "baseline",
+        descriptor=baseline_descriptor,
+    )
+    random = _baseline_policies()[1]
+    manifest = plan_generation(
+        GenerationConfig(
+            "search-smoke",
+            1017,
+            0,
+            max_games_in_flight=1,
+            shard_episode_limit=1,
+            action_ceiling=2_000,
+            validation_level="off",
+        ),
+        (search, random),
+        ((search.policy_id, random.policy_id),),
+        1,
+    )
+
+    assert run_generation(
+        tmp_path,
+        manifest,
+        search_descriptors={search_descriptor.descriptor_id: search_descriptor},
+    ) == ("shard-00000",)
+    episode = read_compact_replay_shard(
+        tmp_path / "replays" / "shard-00000.jsonl.gz",
+        CompactReplayShardManifest("shard-00000", ("episode-000000",)),
+        verify=True,
+    )[0]
+
+    assert episode.terminal_result is not None
+    assert episode.information_policy_version == PUBLIC_COVERED_INFORMATION_POLICY_VERSION
+    assert episode.provenance.seat_mapping[0].policy_descriptor_id == search.policy_id
+    assert (
+        episode.provenance.determinization.search_descriptor_id == search_descriptor.descriptor_id
+    )
+
+
+def test_v2_learned_generation_routes_search_fallback_with_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    search_descriptor = SearchDescriptor(
+        root_turn_horizon=1,
+        opponent_turn_horizon=1,
+        starting_meld_horizon=1,
+        determinization_count=1,
+        route_transition_budget=1,
+    )
+    learned_descriptor = PolicyDescriptor(
+        checkpoint_id="fixture-checkpoint",
+        encoder_layout_fingerprint="fixture-encoder",
+        card_data_fingerprint="fixture-cards",
+        effects_fingerprint="fixture-effects",
+        search_descriptor_id=search_descriptor.descriptor_id,
+    )
+    learned = SeatPolicy(
+        learned_descriptor.policy_id,
+        "learned",
+        learned=learned_descriptor,
+    )
+    random = _baseline_policies()[1]
+    evaluator_calls: list[int] = []
+
+    class _Evaluator:
+        def evaluate(self, positions: Any) -> tuple[float, ...]:
+            evaluator_calls.append(len(positions))
+            return (0.5,) * len(positions)
+
+    class _EvaluatorCache:
+        def __init__(self, checkpoint_root: object) -> None:
+            del checkpoint_root
+
+        def evaluator_for(self, descriptor: object) -> _Evaluator:
+            del descriptor
+            return _Evaluator()
+
+    import innovation_ai.training.inference as inference
+
+    monkeypatch.setattr(inference, "FrozenEvaluatorCache", _EvaluatorCache)
+    manifest = plan_generation(
+        GenerationConfig(
+            "v2-search-smoke",
+            1018,
+            0,
+            max_games_in_flight=1,
+            shard_episode_limit=1,
+            action_ceiling=2_000,
+            validation_level="off",
+        ),
+        (learned, random),
+        ((learned.policy_id, random.policy_id),),
+        1,
+    )
+
+    assert run_generation(
+        tmp_path,
+        manifest,
+        checkpoint_root=tmp_path / "unused-checkpoints",
+        search_descriptors={search_descriptor.descriptor_id: search_descriptor},
+    ) == ("shard-00000",)
+    episode = read_compact_replay_shard(
+        tmp_path / "replays" / "shard-00000.jsonl.gz",
+        CompactReplayShardManifest("shard-00000", ("episode-000000",)),
+        verify=True,
+    )[0]
+
+    assert evaluator_calls
+    assert episode.provenance.seat_mapping[0].policy_descriptor_id == learned.policy_id
+    assert episode.provenance.seat_mapping[0].checkpoint_id == "fixture-checkpoint"
+    assert (
+        episode.provenance.determinization.search_descriptor_id == search_descriptor.descriptor_id
+    )
 
 
 def test_default_learned_pool_mix_is_fixed_50_25_25_with_balanced_seats() -> None:

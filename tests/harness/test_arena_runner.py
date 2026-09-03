@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
@@ -33,6 +33,8 @@ from innovation_ai.harness.arena_runner import (
 from innovation_ai.harness.engine import InnovationEngineAdapter
 from innovation_ai.innovation.state import TerminalReason, TerminalResult
 from innovation_ai.innovation.types import PlayerId
+from innovation_ai.search import SearchDescriptor
+from innovation_ai.training.checkpoint import PolicyDescriptor as TrainingPolicyDescriptor
 
 
 def _baseline_manifest() -> ArenaManifest:
@@ -61,6 +63,122 @@ def test_executor_runs_exact_swapped_games_deterministically() -> None:
     assert tuple(game.game_id for game in first.result.games) == manifest.match_pairs[0].game_ids
     assert tuple(game.candidate_seat for game in first.result.games) == tuple(PlayerId)
     assert first.report.by_opponent[0].opponent_policy_id == "random"
+    assert first.search_telemetry.decisions == 0
+    assert first.search_telemetry.routes == 0
+
+
+def _tiny_search_descriptor() -> SearchDescriptor:
+    return SearchDescriptor(
+        root_turn_horizon=1,
+        opponent_turn_horizon=1,
+        starting_meld_horizon=1,
+        determinization_count=1,
+        route_transition_budget=1,
+    )
+
+
+def test_search_heuristic_runs_every_decision_through_scheduler_and_aggregates_telemetry() -> None:
+    search = _tiny_search_descriptor()
+    manifest = ArenaManifest(
+        "search-execution",
+        "search",
+        PolicyPool("simple-only", (PoolEntry("simple", 1),)),
+        (plan_match_pair("search-seed-808", 808, "search", "simple"),),
+        BootstrapConfig(seed=7, resamples=3),
+    )
+    execution = ArenaRunner(
+        InnovationEngineAdapter(),
+        {
+            "search": PolicyDescriptor("search", "search-heuristic"),
+            "simple": PolicyDescriptor("simple", "simple-heuristic"),
+        },
+        search_policy_descriptors={"search": search},
+        search_descriptors={search.descriptor_id: search},
+    ).execute(manifest)
+
+    assert len(execution.result.games) == 2
+    assert execution.search_telemetry.decisions > 2
+    assert execution.search_telemetry.routes >= execution.search_telemetry.decisions
+    assert execution.search_telemetry.root_transitions == execution.search_telemetry.routes
+    assert execution.search_telemetry.recursive_engine_transitions >= 0
+    assert execution.search_telemetry.mandatory_setup_transitions >= 0
+    assert execution.search_telemetry.transposition_hits >= 0
+    assert execution.search_telemetry.repeated_position_cutoffs >= 0
+    assert execution.search_telemetry.budget_cutoff_routes >= 0
+    assert execution.search_telemetry.immediate_leaf_fallback_routes >= 0
+    with pytest.raises(FrozenInstanceError):
+        execution.search_telemetry.routes = 0  # type: ignore[misc]
+
+
+def test_search_policy_requires_registered_content_derived_descriptor_identity() -> None:
+    policy = {"search": PolicyDescriptor("search", "search-heuristic")}
+    search = _tiny_search_descriptor()
+
+    with pytest.raises(ArenaExecutionError, match="no search descriptor"):
+        ArenaRunner(InnovationEngineAdapter(), policy)
+    with pytest.raises(ArenaExecutionError, match="identity is unavailable"):
+        ArenaRunner(
+            InnovationEngineAdapter(),
+            policy,
+            search_policy_descriptors={"search": search},
+        )
+
+
+def test_learned_v2_setup_fallback_receives_arena_search_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from innovation_ai.harness.policy_scheduler import PolicyScheduler
+
+    search = _tiny_search_descriptor()
+    learned = TrainingPolicyDescriptor(
+        checkpoint_id="learned-checkpoint",
+        encoder_layout_fingerprint="fixture-encoder",
+        card_data_fingerprint="fixture-cards",
+        effects_fingerprint="fixture-effects",
+        search_descriptor_id=search.descriptor_id,
+    )
+
+    class _UnusedEvaluator:
+        def evaluate(self, positions: object) -> tuple[float, ...]:
+            del positions
+            raise AssertionError("setup fallback must not request learned values")
+
+    class _UnusedCache:
+        def evaluator_for(self, descriptor: TrainingPolicyDescriptor) -> _UnusedEvaluator:
+            del descriptor
+            return _UnusedEvaluator()
+
+    handlings: list[str] = []
+    original_schedule = PolicyScheduler.schedule
+
+    def recording_schedule(self: PolicyScheduler, runner: object):
+        schedule = original_schedule(self, runner)  # type: ignore[arg-type]
+        handlings.extend(audit.handling for audit in schedule.audits)
+        return schedule
+
+    monkeypatch.setattr(PolicyScheduler, "schedule", recording_schedule)
+    manifest = ArenaManifest(
+        "learned-search-fallback",
+        "learned",
+        PolicyPool("simple-only", (PoolEntry("simple", 1),)),
+        (plan_match_pair("learned-search-seed", 809, "learned", "simple"),),
+        BootstrapConfig(seed=7, resamples=3),
+    )
+    runner = ArenaRunner(
+        InnovationEngineAdapter(),
+        {
+            "learned": PolicyDescriptor("learned", "learned", "learned-checkpoint"),
+            "simple": PolicyDescriptor("simple", "simple-heuristic"),
+        },
+        learned_policies={"learned": learned},
+        evaluator_cache=_UnusedCache(),  # type: ignore[arg-type]
+        search_descriptors={search.descriptor_id: search},
+        max_actions=1,
+    )
+
+    with pytest.raises(ArenaActionLimitError):
+        runner.execute(manifest)
+    assert "learned-search-fallback" in handlings
 
 
 def test_action_ceiling_retains_reproducible_diagnostic() -> None:

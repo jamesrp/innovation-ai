@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal
 from innovation_ai.agents.base import Agent
 from innovation_ai.agents.descriptors import (
     RANDOM_AGENT_DESCRIPTOR,
+    SAMPLED_MINIMAX_AGENT_DESCRIPTOR,
     SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
     AgentDescriptor,
 )
@@ -37,6 +38,7 @@ from innovation_ai.innovation.actions import action_payload
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.state import GameState, state_hash
 from innovation_ai.innovation.types import PlayerId
+from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR, SearchDescriptor
 
 if TYPE_CHECKING:
     from innovation_ai.training.checkpoint import PolicyDescriptor
@@ -399,8 +401,53 @@ def _atomic(path: Path, text: str) -> None:
     temp.replace(path)
 
 
+def _sampled_minimax_descriptor_id(descriptor: AgentDescriptor | None) -> str | None:
+    """Return the referenced search identity for the versioned search baseline family."""
+
+    if descriptor is None or (
+        descriptor.name != SAMPLED_MINIMAX_AGENT_DESCRIPTOR.name
+        or descriptor.version != SAMPLED_MINIMAX_AGENT_DESCRIPTOR.version
+    ):
+        return None
+    parameters = dict(descriptor.parameters)
+    if set(parameters) != {"search_descriptor_id"} or not isinstance(
+        parameters["search_descriptor_id"], str
+    ):
+        raise SelfPlayError("sampled-minimax baseline must reference one search descriptor")
+    return parameters["search_descriptor_id"]
+
+
+def _assignment_search_descriptor_id(assignment: EpisodeAssignment) -> str | None:
+    descriptor_ids: set[str] = set()
+    for policy in assignment.seat_policies:
+        baseline_id = _sampled_minimax_descriptor_id(policy.descriptor)
+        if baseline_id is not None:
+            descriptor_ids.add(baseline_id)
+        if policy.learned is not None and policy.learned.schema_version >= 2:
+            assert policy.learned.search_descriptor_id is not None
+            descriptor_ids.add(policy.learned.search_descriptor_id)
+    if len(descriptor_ids) > 1:
+        raise SelfPlayError(
+            f"episode {assignment.episode_id!r} uses multiple search descriptor identities"
+        )
+    return next(iter(descriptor_ids), None)
+
+
+def _resolved_search_descriptors(
+    search_descriptors: Mapping[str, SearchDescriptor] | None,
+) -> dict[str, SearchDescriptor]:
+    descriptors = {PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR}
+    descriptors.update(search_descriptors or {})
+    for descriptor_id, descriptor in descriptors.items():
+        if descriptor_id != descriptor.descriptor_id:
+            raise SelfPlayError("search descriptor mapping key differs from descriptor identity")
+    return descriptors
+
+
 def _provenance(
-    manifest: GenerationManifest, assignment: EpisodeAssignment
+    manifest: GenerationManifest,
+    assignment: EpisodeAssignment,
+    search_descriptors: Mapping[str, SearchDescriptor],
 ) -> CompactReplayProvenance:
     seats = (
         SeatPolicyProvenance(
@@ -421,6 +468,12 @@ def _provenance(
         ),
     )
     learned = next((p.learned for p in assignment.seat_policies if p.learned), None)
+    search_descriptor_id = _assignment_search_descriptor_id(assignment)
+    search_descriptor = (
+        None if search_descriptor_id is None else search_descriptors.get(search_descriptor_id)
+    )
+    if search_descriptor_id is not None and search_descriptor is None:
+        raise SelfPlayError(f"required search descriptor {search_descriptor_id!r} is unavailable")
     return CompactReplayProvenance(
         manifest.config.run_id,
         sha256_digest(_json(manifest.payload())),
@@ -432,11 +485,31 @@ def _provenance(
             "sha256-domain-separated-v1" if learned is None else learned.selector_rng_version,
         ),
         DeterminizationProvenance(
-            "information-set-sampler-v1",
+            (
+                "information-set-sampler-v1"
+                if search_descriptor is None
+                else (
+                    "player-safe-search-sampler-v1"
+                    if learned is None
+                    else "information-set-sampler-v1+player-safe-search-sampler-v1"
+                )
+            ),
             "sha256-counter-v1",
-            0 if learned is None else learned.determinization_count,
-            "simple-heuristic",
+            (
+                learned.determinization_count
+                if learned is not None
+                else 0
+                if search_descriptor is None
+                else search_descriptor.determinization_count
+            ),
+            (
+                "simple-heuristic"
+                if manifest.config.sampler_failure_mode is SamplerFailureMode.HEURISTIC
+                and search_descriptor is None
+                else None
+            ),
             manifest.config.sampler_failure_mode is SamplerFailureMode.STRICT,
+            search_descriptor_id,
         ),
     )
 
@@ -448,6 +521,7 @@ def run_generation(
     checkpoint_root: str | Path | None = None,
     stop_requested: Callable[[], bool] | None = None,
     registry: CardRegistry | None = None,
+    search_descriptors: Mapping[str, SearchDescriptor] | None = None,
 ) -> tuple[str, ...]:
     """Run only missing whole shards. A stop is observed between shards, never mid-shard."""
     root = Path(run_dir)
@@ -461,6 +535,7 @@ def run_generation(
     else:
         save_manifest(existing, manifest)
     registry = registry or load_card_registry()
+    resolved_search_descriptors = _resolved_search_descriptors(search_descriptors)
     assignments = {a.episode_id: a for a in manifest.assignments}
     sealed: list[str] = []
     for shard in manifest.shards:
@@ -484,7 +559,15 @@ def run_generation(
         if stop_requested is not None and stop_requested():
             break
         try:
-            _run_shard(path, cm, manifest, assignments, registry, checkpoint_root)
+            _run_shard(
+                path,
+                cm,
+                manifest,
+                assignments,
+                registry,
+                checkpoint_root,
+                resolved_search_descriptors,
+            )
         except SelfPlayActionLimitError as error:
             _atomic(root / "generation-failure.json", _json(error.diagnostic) + "\n")
             raise
@@ -499,6 +582,7 @@ def _run_shard(
     assignments: Mapping[str, EpisodeAssignment],
     registry: CardRegistry,
     checkpoint_root: str | Path | None,
+    search_descriptors: Mapping[str, SearchDescriptor],
 ) -> None:
     from innovation_ai.innovation.zones import ValidationLevel, validation
 
@@ -510,6 +594,7 @@ def _run_shard(
             assignments,
             registry,
             checkpoint_root,
+            search_descriptors,
         )
 
 
@@ -520,6 +605,7 @@ def _run_shard_active(
     assignments: Mapping[str, EpisodeAssignment],
     registry: CardRegistry,
     checkpoint_root: str | Path | None,
+    search_descriptors: Mapping[str, SearchDescriptor],
 ) -> None:
     engine = InnovationEngineAdapter(registry)
 
@@ -527,7 +613,7 @@ def _run_shard_active(
         return CompactReplayRecorder(
             engine.initial_state(assignments[eid].setup_seed),
             eid,
-            _provenance(manifest, assignments[eid]),
+            _provenance(manifest, assignments[eid], search_descriptors),
             registry,
         )
 
@@ -548,11 +634,16 @@ def _run_shard_active(
     # The scheduler receives immutable per-seat learned assignments and actor-local
     # baseline/fallback agents.  It may inspect the public pool runner, but all
     # commits route through ``pool.submit`` so completion retirement/refill stays bounded.
-    from innovation_ai.harness.policy_scheduler import LearnedPolicyAssignment, PolicyScheduler
+    from innovation_ai.harness.policy_scheduler import (
+        LearnedPolicyAssignment,
+        PolicyScheduler,
+        SearchPolicyAssignment,
+    )
     from innovation_ai.harness.policy_scheduler import SamplerFailureMode as SchedulerFailureMode
 
     fallback_agents: dict[tuple[str, PlayerId], Agent] = {}
     learned_assignments: dict[str | tuple[str, PlayerId], LearnedPolicyAssignment] = {}
+    search_assignments: dict[str | tuple[str, PlayerId], SearchPolicyAssignment] = {}
     descriptors: dict[str, PolicyDescriptor] = {}
     for episode_id in shard.episode_ids:
         assignment = assignments[episode_id]
@@ -562,21 +653,34 @@ def _run_shard_active(
                 descriptor = seat_policy.learned
                 descriptors.setdefault(descriptor.policy_id, descriptor)
                 learned_assignments[key] = LearnedPolicyAssignment(descriptor, descriptor.policy_id)
-                # Learned control remains paid-turn-only in this milestone.
+                # Schema-v1 continuation routing remains scheduler-owned legacy behavior; schema-v2
+                # continuation routing resolves its immutable search descriptor in the scheduler.
                 fallback_agents[key] = SimpleHeuristicAgent(registry)
-            elif seat_policy.descriptor == SIMPLE_HEURISTIC_AGENT_DESCRIPTOR:
-                fallback_agents[key] = SimpleHeuristicAgent(registry)
-            elif seat_policy.descriptor == RANDOM_AGENT_DESCRIPTOR:
-                fallback_agents[key] = RandomAgent(
-                    agent_seed(
-                        manifest.config.run_seed,
-                        episode_id,
-                        seat_id.value,
-                        seat_policy.policy_id,
-                    )
-                )
             else:
-                raise SelfPlayError(f"unsupported baseline policy {seat_policy.policy_id!r}")
+                search_descriptor_id = _sampled_minimax_descriptor_id(seat_policy.descriptor)
+                if search_descriptor_id is not None:
+                    try:
+                        search_descriptor = search_descriptors[search_descriptor_id]
+                    except KeyError as error:
+                        raise SelfPlayError(
+                            f"required search descriptor {search_descriptor_id!r} is unavailable"
+                        ) from error
+                    search_assignments[key] = SearchPolicyAssignment(
+                        seat_policy.policy_id, search_descriptor
+                    )
+                elif seat_policy.descriptor == SIMPLE_HEURISTIC_AGENT_DESCRIPTOR:
+                    fallback_agents[key] = SimpleHeuristicAgent(registry)
+                elif seat_policy.descriptor == RANDOM_AGENT_DESCRIPTOR:
+                    fallback_agents[key] = RandomAgent(
+                        agent_seed(
+                            manifest.config.run_seed,
+                            episode_id,
+                            seat_id.value,
+                            seat_policy.policy_id,
+                        )
+                    )
+                else:
+                    raise SelfPlayError(f"unsupported baseline policy {seat_policy.policy_id!r}")
 
     evaluators: dict[str, BatchValueEvaluator] = {}
     if descriptors:
@@ -592,6 +696,8 @@ def _run_shard_active(
     scheduler = PolicyScheduler(
         learned_assignments,
         evaluators,
+        search_assignments=search_assignments,
+        search_descriptors=search_descriptors,
         fallback_agents=fallback_agents,
         run_seed=manifest.config.run_seed,
         generation=manifest.config.generation,

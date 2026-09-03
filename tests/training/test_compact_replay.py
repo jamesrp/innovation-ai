@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -76,6 +77,34 @@ def test_compact_episode_round_trip_is_actions_only_and_verifiable() -> None:
     assert verified.state.terminal_result == episode.terminal_result
     assert compact_episode_digest(restored) == sha256_digest(encoded)
     assert episode.setup_digest.startswith("sha256:")
+
+
+def test_determinization_search_identity_is_optional_and_digest_validated() -> None:
+    legacy = _episode(1006, "legacy-provenance")
+    legacy_encoded = dumps_compact_episode(legacy)
+    assert '"search_descriptor_id"' not in legacy_encoded
+    assert dumps_compact_episode(loads_compact_episode(legacy_encoded)) == legacy_encoded
+
+    search_id = "sha256:" + "a" * 64
+    milestone_four = replace(
+        legacy,
+        provenance=replace(
+            legacy.provenance,
+            determinization=replace(
+                legacy.provenance.determinization,
+                search_descriptor_id=search_id,
+            ),
+        ),
+    )
+    encoded = dumps_compact_episode(milestone_four)
+    assert loads_compact_episode(encoded) == milestone_four
+    assert json.loads(encoded)["determinization"]["search_descriptor_id"] == search_id
+
+    malformed = json.loads(encoded)
+    malformed["determinization"]["search_descriptor_id"] = "sha256:not-a-digest"
+    malformed_text = json.dumps(malformed, sort_keys=True, separators=(",", ":"))
+    with pytest.raises(CompactReplaySchemaError, match="tagged lower-case SHA-256"):
+        loads_compact_episode(malformed_text)
 
 
 def test_compact_episode_rejects_noncanonical_edits_truncation_illegal_and_incompatible() -> None:

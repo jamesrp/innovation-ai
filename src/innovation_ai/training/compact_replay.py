@@ -190,13 +190,18 @@ class ExplorationProvenance:
 
 @dataclass(frozen=True, slots=True)
 class DeterminizationProvenance:
-    """Versioned hidden-state-sampling configuration used by an actor."""
+    """Versioned hidden-state-sampling configuration used by an actor.
+
+    ``search_descriptor_id`` is absent from legacy payloads.  Milestone-4 producers include it
+    when sampled search can make any decision in the episode.
+    """
 
     sampler_version: str
     rng_version: str
     count: int
     failure_policy_id: str | None
     strict: bool
+    search_descriptor_id: str | None = None
 
     def __post_init__(self) -> None:
         _required_text(self.sampler_version, "sampler version")
@@ -205,6 +210,8 @@ class DeterminizationProvenance:
             raise ValueError("determinizations count cannot be negative")
         if self.failure_policy_id is not None:
             _required_text(self.failure_policy_id, "determinization failure policy ID")
+        if self.search_descriptor_id is not None:
+            _digest(self.search_descriptor_id, "search descriptor ID")
 
 
 @dataclass(frozen=True, slots=True)
@@ -822,23 +829,36 @@ def _exploration_from_payload(value: JsonValue) -> ExplorationProvenance:
 
 
 def _determinization_payload(value: DeterminizationProvenance) -> dict[str, JsonValue]:
-    return {
+    payload: dict[str, JsonValue] = {
         "sampler_version": value.sampler_version,
         "rng_version": value.rng_version,
         "count": value.count,
         "failure_policy_id": value.failure_policy_id,
         "strict": value.strict,
     }
+    if value.search_descriptor_id is not None:
+        payload["search_descriptor_id"] = value.search_descriptor_id
+    return payload
 
 
 def _determinization_from_payload(value: JsonValue) -> DeterminizationProvenance:
     payload = _object(value, "compact_episode.determinization")
-    _exact_keys(
-        payload,
-        {"sampler_version", "rng_version", "count", "failure_policy_id", "strict"},
-        "compact_episode.determinization",
-    )
+    legacy_keys = {"sampler_version", "rng_version", "count", "failure_policy_id", "strict"}
+    allowed_keys = {
+        frozenset(legacy_keys),
+        frozenset(legacy_keys | {"search_descriptor_id"}),
+    }
+    if set(payload) not in allowed_keys:
+        _exact_keys(payload, legacy_keys, "compact_episode.determinization")
     raw_failure_policy = payload["failure_policy_id"]
+    search_descriptor_id = (
+        _string(
+            payload["search_descriptor_id"],
+            "compact_episode.determinization.search_descriptor_id",
+        )
+        if "search_descriptor_id" in payload
+        else None
+    )
     return DeterminizationProvenance(
         sampler_version=_string(
             payload["sampler_version"], "compact_episode.determinization.sampler_version"
@@ -851,6 +871,7 @@ def _determinization_from_payload(value: JsonValue) -> DeterminizationProvenance
             else _string(raw_failure_policy, "compact_episode.determinization.failure_policy_id")
         ),
         strict=_boolean(payload["strict"], "compact_episode.determinization.strict"),
+        search_descriptor_id=search_descriptor_id,
     )
 
 

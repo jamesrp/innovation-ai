@@ -14,6 +14,10 @@ from innovation_ai.agents import (
     ScriptExhaustedError,
     SimpleHeuristicAgent,
 )
+from innovation_ai.agents.descriptors import (
+    SAMPLED_MINIMAX_AGENT_DESCRIPTOR,
+    SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
+)
 from innovation_ai.innovation.actions import (
     AchieveAction,
     ChooseBranchAction,
@@ -29,6 +33,17 @@ from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.protocol import apply_action, current_decision
 from innovation_ai.innovation.state import build_setup_state
 from innovation_ai.innovation.types import CardId, NormalAchievementId
+from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR
+
+
+def test_sampled_minimax_descriptor_references_production_search_identity() -> None:
+    assert SIMPLE_HEURISTIC_AGENT_DESCRIPTOR.parameters == ()
+    assert SAMPLED_MINIMAX_AGENT_DESCRIPTOR.parameters == (
+        ("search_descriptor_id", PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id),
+    )
+    assert tuple(key for key, _ in SAMPLED_MINIMAX_AGENT_DESCRIPTOR.parameters) == tuple(
+        sorted(key for key, _ in SAMPLED_MINIMAX_AGENT_DESCRIPTOR.parameters)
+    )
 
 
 def _first_turn_decision(seed: int = 801) -> Decision:

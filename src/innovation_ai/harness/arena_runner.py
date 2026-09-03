@@ -43,8 +43,10 @@ from innovation_ai.innovation.actions import action_payload
 from innovation_ai.innovation.serialization import JsonValue, canonical_json, parse_json
 from innovation_ai.innovation.state import GameState, state_hash
 from innovation_ai.innovation.types import PlayerId
+from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR, SearchDescriptor
 
 if TYPE_CHECKING:
+    from innovation_ai.search.minimax import SearchStatistics
     from innovation_ai.training.checkpoint import PolicyDescriptor as TrainingPolicyDescriptor
     from innovation_ai.training.inference import FrozenEvaluatorCache
 
@@ -76,11 +78,48 @@ class PromotionDecision(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ArenaSearchTelemetry:
+    """Aggregate sampled-search work committed across one arena execution."""
+
+    routes: int = 0
+    nodes: int = 0
+    recursive_engine_transitions: int = 0
+    root_transitions: int = 0
+    mandatory_setup_transitions: int = 0
+    transposition_hits: int = 0
+    repeated_position_cutoffs: int = 0
+    budget_cutoff_routes: int = 0
+    immediate_leaf_fallback_routes: int = 0
+    decisions: int = 0
+
+    @property
+    def recursive_transitions(self) -> int:
+        return self.recursive_engine_transitions
+
+    @property
+    def setup_transitions(self) -> int:
+        return self.mandatory_setup_transitions
+
+    @property
+    def tt_hits(self) -> int:
+        return self.transposition_hits
+
+    @property
+    def cycle_cutoffs(self) -> int:
+        return self.repeated_position_cutoffs
+
+    @property
+    def immediate_fallback_routes(self) -> int:
+        return self.immediate_leaf_fallback_routes
+
+
+@dataclass(frozen=True, slots=True)
 class ArenaExecution:
-    """Fully validated raw results and their deterministic report."""
+    """Fully validated raw results, deterministic report, and execution-only telemetry."""
 
     result: ArenaResult
     report: ArenaReport
+    search_telemetry: ArenaSearchTelemetry = ArenaSearchTelemetry()
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +193,8 @@ class ArenaRunner:
         *,
         learned_policies: Mapping[str, TrainingPolicyDescriptor] = {},
         evaluator_cache: FrozenEvaluatorCache | None = None,
+        search_policy_descriptors: Mapping[str, SearchDescriptor] = {},
+        search_descriptors: Mapping[str, SearchDescriptor] | None = None,
         baseline_factories: Mapping[str, BaselineFactory] = {},
         max_actions: int = 10_000,
         run_seed: int | str | bytes = 0,
@@ -165,13 +206,37 @@ class ArenaRunner:
         self._policies = dict(policy_descriptors)
         self._learned = dict(learned_policies)
         self._cache = evaluator_cache
+        self._search_policy_descriptors = dict(search_policy_descriptors)
+        self._search_descriptors = {
+            PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR
+        }
+        self._search_descriptors.update(search_descriptors or {})
         self._factories = dict(baseline_factories)
         self._max_actions = max_actions
         self._run_seed = run_seed
         self._generation = generation
+        for descriptor_id, registered_descriptor in self._search_descriptors.items():
+            if descriptor_id != registered_descriptor.descriptor_id:
+                raise ArenaExecutionError(
+                    "search descriptor mapping key must equal descriptor identity"
+                )
         for policy_id, descriptor in self._policies.items():
             if policy_id != descriptor.policy_id:
                 raise ArenaExecutionError("policy descriptor mapping key must equal policy ID")
+            search = policy_id in self._search_policy_descriptors
+            if descriptor.policy_kind == "search-heuristic" and not search:
+                raise ArenaExecutionError(f"search policy {policy_id!r} has no search descriptor")
+            if search and descriptor.policy_kind != "search-heuristic":
+                raise ArenaExecutionError(
+                    f"non-search policy {policy_id!r} has a search descriptor"
+                )
+            if search:
+                search_descriptor = self._search_policy_descriptors[policy_id]
+                registered = self._search_descriptors.get(search_descriptor.descriptor_id)
+                if registered != search_descriptor:
+                    raise ArenaExecutionError(
+                        f"search policy {policy_id!r} descriptor identity is unavailable"
+                    )
             learned = policy_id in self._learned
             if descriptor.policy_kind == "learned" and not learned:
                 raise ArenaExecutionError(
@@ -185,6 +250,11 @@ class ArenaRunner:
                 raise ArenaExecutionError(
                     f"learned policy {policy_id!r} checkpoint reference does not match "
                     "its descriptor"
+                )
+        for policy_id in self._search_policy_descriptors:
+            if policy_id not in self._policies:
+                raise ArenaExecutionError(
+                    f"search descriptor references unknown policy {policy_id!r}"
                 )
         if self._learned and self._cache is None:
             raise ArenaExecutionError("learned policies require a FrozenEvaluatorCache")
@@ -214,14 +284,24 @@ class ArenaRunner:
         baselines: dict[tuple[str, PlayerId], Agent] = {}
         submitted_actions = {game_id: 0 for game_id in plan_by_game}
         scheduler = None
-        if self._learned:
+        routed_policy_ids = {
+            self._policy_for(pair, planned, seat)
+            for pair, planned in plan_by_game.values()
+            for seat in PlayerId
+        }
+        if any(
+            self._is_learned(policy_id) or self._is_search(policy_id)
+            for policy_id in routed_policy_ids
+        ):
             from innovation_ai.harness.policy_scheduler import (
                 LearnedPolicyAssignment,
                 PolicyAssignmentKey,
                 PolicyScheduler,
+                SearchPolicyAssignment,
             )
 
             assignments: dict[PolicyAssignmentKey, LearnedPolicyAssignment] = {}
+            search_assignments: dict[PolicyAssignmentKey, SearchPolicyAssignment] = {}
             evaluators = {}
             fallback_agents: dict[tuple[str, PlayerId], Agent] = {}
             for game_id, (pair, planned) in plan_by_game.items():
@@ -233,6 +313,10 @@ class ArenaRunner:
                         assignments[(game_id, seat)] = LearnedPolicyAssignment(descriptor, key)
                         assert self._cache is not None
                         evaluators[key] = self._cache.evaluator_for(descriptor)
+                    elif self._is_search(policy_id):
+                        search_assignments[(game_id, seat)] = SearchPolicyAssignment(
+                            policy_id, self._search_policy_descriptors[policy_id]
+                        )
                     else:
                         fallback_agents[(game_id, seat)] = self._baseline_agent(
                             policy_id, pair, seat
@@ -240,6 +324,8 @@ class ArenaRunner:
             scheduler = PolicyScheduler(
                 assignments,
                 evaluators,
+                search_assignments=search_assignments,
+                search_descriptors=self._search_descriptors,
                 fallback_agents=fallback_agents,
                 run_seed=self._run_seed,
                 generation=self._generation,
@@ -252,6 +338,7 @@ class ArenaRunner:
 
         submitted_actions = {game_id: 0 for game_id in plan_by_game}
         action_tails: dict[str, list[dict[str, object]]] = {game_id: [] for game_id in plan_by_game}
+        search_statistics: list[SearchStatistics] = []
         while True:
             pending = runner.pending()
             if not pending:
@@ -306,6 +393,9 @@ class ArenaRunner:
             if scheduler is not None:
                 assert policy_schedule is not None
                 scheduler.record_committed(policy_schedule)
+                search_statistics.extend(
+                    selection.statistics for selection in policy_schedule.search_selections
+                )
             for submission in submissions:
                 submitted_actions[submission.game_id] += 1
                 action_tails[submission.game_id].append(
@@ -326,7 +416,27 @@ class ArenaRunner:
                 games.append(arena_game_result_from_record(pair, completed.record))
         result = ArenaResult.for_manifest(manifest, games)
         validate_arena_result(manifest, result)
-        return ArenaExecution(result, build_arena_report(manifest, result))
+        telemetry = ArenaSearchTelemetry(
+            routes=sum(item.routes for item in search_statistics),
+            nodes=sum(item.nodes for item in search_statistics),
+            recursive_engine_transitions=sum(
+                item.recursive_engine_transitions for item in search_statistics
+            ),
+            root_transitions=sum(item.root_transitions for item in search_statistics),
+            mandatory_setup_transitions=sum(
+                item.mandatory_setup_transitions for item in search_statistics
+            ),
+            transposition_hits=sum(item.transposition_hits for item in search_statistics),
+            repeated_position_cutoffs=sum(
+                item.repeated_position_cutoffs for item in search_statistics
+            ),
+            budget_cutoff_routes=sum(item.budget_cutoff_routes for item in search_statistics),
+            immediate_leaf_fallback_routes=sum(
+                item.immediate_leaf_fallback_routes for item in search_statistics
+            ),
+            decisions=len(search_statistics),
+        )
+        return ArenaExecution(result, build_arena_report(manifest, result), telemetry)
 
     def _require_policy(self, policy_id: str) -> ArenaPolicyDescriptor:
         try:
@@ -338,6 +448,9 @@ class ArenaRunner:
 
     def _is_learned(self, policy_id: str) -> bool:
         return policy_id in self._learned
+
+    def _is_search(self, policy_id: str) -> bool:
+        return policy_id in self._search_policy_descriptors
 
     @staticmethod
     def _policy_for(pair: MatchPair, planned: PlannedGame, seat: PlayerId) -> str:
@@ -355,7 +468,7 @@ class ArenaRunner:
         factory = self._factories.get(descriptor.policy_kind)
         if factory is not None:
             return factory(self._baseline_seed(policy_id, pair, seat))
-        if descriptor.policy_kind == "heuristic":
+        if descriptor.policy_kind in {"heuristic", "simple-heuristic"}:
             return SimpleHeuristicAgent()
         if descriptor.policy_kind == "random":
             return RandomAgent(self._baseline_seed(policy_id, pair, seat))
