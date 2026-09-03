@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -23,6 +24,7 @@ from innovation_ai.harness.arena_runner import (
     ArenaActionLimitError,
     ArenaExecutionError,
     ArenaRunner,
+    ArenaTraceConfiguration,
     ChampionManifest,
     PromotionDecision,
     dumps_champion_manifest,
@@ -30,6 +32,7 @@ from innovation_ai.harness.arena_runner import (
     promotion_outcome,
     write_champion,
 )
+from innovation_ai.harness.diagnostics import read_diagnostic_trace
 from innovation_ai.harness.engine import InnovationEngineAdapter
 from innovation_ai.innovation.state import TerminalReason, TerminalResult
 from innovation_ai.innovation.types import PlayerId
@@ -65,6 +68,100 @@ def test_executor_runs_exact_swapped_games_deterministically() -> None:
     assert first.report.by_opponent[0].opponent_policy_id == "random"
     assert first.search_telemetry.decisions == 0
     assert first.search_telemetry.routes == 0
+
+
+def test_executor_writes_deterministic_exact_private_trace_chain_and_redacted_summary(
+    tmp_path: Path,
+) -> None:
+    manifest = _baseline_manifest()
+    policies = {
+        "heuristic": PolicyDescriptor("heuristic", "heuristic"),
+        "random": PolicyDescriptor("random", "random"),
+    }
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first = ArenaRunner(
+        InnovationEngineAdapter(),
+        policies,
+        trace_configuration=ArenaTraceConfiguration(first_root, "revision-1"),
+    ).execute(manifest)
+    second = ArenaRunner(
+        InnovationEngineAdapter(),
+        policies,
+        trace_configuration=ArenaTraceConfiguration(second_root, "revision-1"),
+    ).execute(manifest)
+
+    assert set(first.trace_artifacts) == set(manifest.match_pairs[0].game_ids)
+    for game in first.result.games:
+        first_artifact = first.trace_artifacts[game.game_id]
+        second_artifact = second.trace_artifacts[game.game_id]
+        assert first_artifact.private_path.read_bytes() == second_artifact.private_path.read_bytes()
+        assert (
+            first_artifact.redacted_path.read_bytes() == second_artifact.redacted_path.read_bytes()
+        )
+        assert first_artifact.private_sha256 == second_artifact.private_sha256
+        assert first_artifact.redacted_sha256 == second_artifact.redacted_sha256
+
+        trace = read_diagnostic_trace(first_artifact.private_path)
+        assert trace.footer.step_count == game.game_length
+        assert len(trace.steps) == game.game_length
+        assert trace.footer.failure is None
+        redacted = first_artifact.redacted_path.read_text("ascii")
+        assert '"legal_actions"' not in redacted
+        assert '"selected_action"' not in redacted
+        assert '"actions"' not in redacted
+
+
+def test_action_ceiling_writes_failure_trace_before_raising(tmp_path: Path) -> None:
+    manifest = _baseline_manifest()
+    failing_game_id = manifest.match_pairs[0].games[0].game_id
+    runner = ArenaRunner(
+        InnovationEngineAdapter(),
+        {
+            "heuristic": PolicyDescriptor("heuristic", "heuristic"),
+            "random": PolicyDescriptor("random", "random"),
+        },
+        max_actions=2,
+        trace_configuration=ArenaTraceConfiguration(tmp_path, "revision-1"),
+    )
+
+    with pytest.raises(ArenaActionLimitError):
+        runner.execute(manifest)
+
+    trace = read_diagnostic_trace(tmp_path / f"{failing_game_id}.private.jsonl.gz")
+    assert trace.footer.outcome == "action-ceiling"
+    assert trace.footer.failure is not None
+    assert trace.footer.step_count == 2
+    assert (tmp_path / f"{failing_game_id}.redacted.json").is_file()
+
+
+def test_arena_trace_snapshot_markers_are_explicit_and_enforced(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="private-debug"):
+        ArenaTraceConfiguration(
+            tmp_path,
+            "revision-1",
+            authoritative_snapshots=True,
+        )
+
+    manifest = _baseline_manifest()
+    execution = ArenaRunner(
+        InnovationEngineAdapter(),
+        {
+            "heuristic": PolicyDescriptor("heuristic", "heuristic"),
+            "random": PolicyDescriptor("random", "random"),
+        },
+        trace_configuration=ArenaTraceConfiguration(
+            tmp_path,
+            "revision-1",
+            authoritative_snapshots=True,
+            private_debug=True,
+        ),
+    ).execute(manifest)
+    trace = read_diagnostic_trace(next(iter(execution.trace_artifacts.values())).private_path)
+    assert trace.header.authoritative_snapshots
+    assert trace.header.private_debug
+    assert all(step.before_snapshot is not None for step in trace.steps)
+    assert all(step.after_snapshot is not None for step in trace.steps)
 
 
 def _tiny_search_descriptor() -> SearchDescriptor:
@@ -151,7 +248,7 @@ def test_learned_v2_setup_fallback_receives_arena_search_descriptor(
     handlings: list[str] = []
     original_schedule = PolicyScheduler.schedule
 
-    def recording_schedule(self: PolicyScheduler, runner: object):
+    def recording_schedule(self: PolicyScheduler, runner: object) -> Any:
         schedule = original_schedule(self, runner)  # type: ignore[arg-type]
         handlings.extend(audit.handling for audit in schedule.audits)
         return schedule

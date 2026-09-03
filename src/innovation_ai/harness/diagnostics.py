@@ -689,7 +689,10 @@ def derive_no_progress_telemetry(
     repeated: RepeatedPaidActionWindow | None = None
     if decision.kind is DecisionKind.TURN_ACTION:
         current = _action_pattern(action)
-        prior = tuple(_action_pattern(item) for item in recent_paid_actions[-repeated_window_size:])
+        prior = tuple(
+            _action_pattern(item)
+            for item in recent_paid_actions[-max(0, repeated_window_size - 1) :]
+        )
         patterns = (*prior, current)[-repeated_window_size:]
         matches = sum(item == current for item in prior)
         repeated = RepeatedPaidActionWindow(
