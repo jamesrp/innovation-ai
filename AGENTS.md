@@ -7,9 +7,11 @@ toward a strong self-play-trained Innovation AI. **Milestones 1–3 are complete
 engine covers all 105 supplied cards, the first learned-value pipeline includes encoder v1, compact
 replay training, information-safe afterstates, frozen self-play, paired arenas, and CPU profiling,
 and the first measured training pilot exposed and diagnosed a deterministic policy cycle.
-**Milestone 4 is current:** build a player-safe sampled minimax heuristic, adopt public board-card
-information, harden pathological-game observability, restore temperature softmax as the primary
-learned selector, retrain, and reevaluate.
+**Milestone 4 is current but stopped at feasibility:** the player-safe search/public-information/
+observability foundation is implemented, but the exhaustive one-completed-turn rerun failed the
+frozen cutoff and throughput gates. Do not run heuristic strength arenas, fresh training, or
+candidate evaluation until the owner chooses a search optimization, approximation, or compute
+change. See the Milestone 4 addendum.
 
 Read these before changing engine or ML behavior:
 

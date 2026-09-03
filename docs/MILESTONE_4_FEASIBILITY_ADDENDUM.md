@@ -1,11 +1,74 @@
 # Milestone 4 feasibility and diagnostic addendum
 
 **Date:** September 3, 2026  
-**Status:** the original Work Package 0 4/3/4-turn feasibility gate failed and Work Package 1's
-historical reproduction completed. On September 3, 2026, the project owner superseded the original
-horizon with one completed player turn for every search root and explicitly rejected selective
-choose-two continuation. The original measurements below remain historical evidence; the revised
-one-turn descriptor awaits its production-budget feasibility rerun.
+**Status:** both exhaustive search horizons tested for Milestone 4 are infeasible on the two-core
+CPU host. The original 4/3/4-turn gate failed, and the owner-approved one-completed-turn rerun also
+failed the unchanged cutoff, fallback, category-completion, and throughput gates. No production
+search descriptor, route budget, or determinization count is frozen. Heuristic arenas, training,
+and strength evaluation remain stopped pending a project decision.
+
+## One-completed-turn feasibility rerun
+
+The revised exhaustive horizon was measured from source revision
+`0f698ce090479f3d2737e9f60239af13c75dc3c0` on September 3, 2026. The committed eight-root corpus
+was swept at 400, 800, and 1,600 recursive engine transitions per independently budgeted
+`(root action, determinization)` route, with one, two, and four determinizations. Sampling remained
+strict and player-safe. All 72 root measurements completed with zero sampler, search, invariant, or
+benchmark failures.
+
+The existing pre-strength gates were applied unchanged; no threshold was relaxed after seeing the
+one-turn result. In particular, a production choice still required at most 5% budget-cutoff routes,
+at most 1% immediate-leaf routes, at least 95% full-depth completion in every corpus category, at
+least 2.0 roots/s at one determinization, and at least 0.75 roots/s at four determinizations.
+
+| route budget | determinizations | routes | cutoff rate | immediate-leaf rate | full-depth rate | late-root full depth | wall time | roots/s |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 400 | 1 | 31 | 22.6% | 22.6% | 77.4% | 50.0% | 16.03 s | 0.499 |
+| 400 | 2 | 62 | 22.6% | 22.6% | 77.4% | 50.0% | 29.89 s | 0.268 |
+| 400 | 4 | 124 | 22.6% | 22.6% | 77.4% | 50.0% | 53.06 s | 0.151 |
+| 800 | 1 | 31 | 12.9% | 12.9% | 87.1% | 71.4% | 20.24 s | 0.395 |
+| 800 | 2 | 62 | 12.9% | 12.9% | 87.1% | 71.4% | 88.36 s | 0.091 |
+| 800 | 4 | 124 | 12.9% | 12.9% | 87.1% | 71.4% | 131.29 s | 0.061 |
+| 1,600 | 1 | 31 | 9.7% | 9.7% | 90.3% | 78.6% | 57.17 s | 0.140 |
+| 1,600 | 2 | 62 | 9.7% | 9.7% | 90.3% | 78.6% | 111.96 s | 0.071 |
+| 1,600 | 4 | 124 | 9.7% | 9.7% | 90.3% | 78.6% | 260.05 s | 0.031 |
+
+Every setup, early-game, second-action, own-effect, opponent-demand, and opponent-shared root
+completed the one-turn horizon at every tested budget. The late high-branching root, which exposes
+14 legal root actions, was the binding failure: 7, 4, and 3 of its 14 one-determinization routes
+fell back to the immediate leaf at budgets 400, 800, and 1,600 respectively. Raising the budget
+improved completion but made already-failing throughput worse. Even the cheapest tested descriptor
+missed the one-determinization throughput gate by about 4x and the four-determinization gate by
+about 5x.
+
+The complete local evidence is retained at:
+
+```text
+artifacts/runs/milestone-4/search-feasibility-one-turn/search-feasibility.json
+artifacts/runs/milestone-4/search-feasibility-one-turn/search-feasibility.md
+```
+
+The deterministic counter/content digest is:
+
+```text
+sha256:d9d133b581fec7fa073f797d21556439f9db79b1eaa79e271cccd89b7d124a29
+```
+
+Because that digest deliberately excludes timing and RSS, the complete JSON file digest is also
+recorded:
+
+```text
+sha256:421c6cb597ba61543b15306abfbaa6d2a4599573a938cc373f492cee9faa7b8d
+```
+
+The host exposed two AMD EPYC 9554P vCPUs, 7.7 GiB RAM, and no swap. Peak measured process RSS was
+36.0 MiB, so CPU search cost rather than memory was the binding resource.
+
+**Decision:** stop Milestone 4 before heuristic validation, fresh training, or strength evaluation.
+No tested budget/determinization pair qualifies as the production heuristic, and increasing only
+the route budget cannot plausibly satisfy both completion and throughput. The next step requires an
+explicit project decision about search optimization, search approximation, evaluator/policy design,
+or additional compute.
 
 ## Superseding one-turn decision
 
@@ -15,25 +78,23 @@ Do not add choose-two, beam, or other selective continuation in Milestone 4. The
 selecting future branches with the simple version-1 leaf evaluator would add another arbitrary
 approximation whose benefit has not been established.
 
-The search version is now `root-sampled-minimax-one-completed-turn-v1`; changing the horizon creates
+The search version is `root-sampled-minimax-one-completed-turn-v1`; changing the horizon created
 a new descriptor and policy identity. All real root actions, opponent Meld actions, nested effect
 choices, stable legal-order ties, common determinizations, route-local transpositions, and cycle
-cutoffs remain as specified. Only the completed-turn horizon changes.
+cutoffs remain as specified. Only the completed-turn horizon changed.
 
-The current one-turn implementation default uses the still-provisional 400-transition,
+The current one-turn implementation default still uses the provisional 400-transition,
 one-determinization descriptor:
 
 ```text
 sha256:a3de2116646c297b30b75e25fc4ab065ef1a0674f89b932eecd9ef5eea2b067e
 ```
 
-Its budget and determinization count are not production-frozen; the next thread must replace this
-identity if the revised feasibility measurements select different values.
+Its budget and determinization count are not production-frozen. The one-turn rerun above found no
+qualifying replacement identity, so this provisional descriptor must not be used for heuristic
+validation, training, or strength evaluation.
 
-The earlier 4/3/4 gates and measurements below are retained unchanged as historical evidence. The
-next implementation thread must rerun the committed corpus at one, two, and four determinizations,
-select and freeze a per-route budget under the same cutoff/throughput discipline, update the dated
-report with the new descriptor digest, and only then begin heuristic validation or training.
+The earlier 4/3/4 gates and measurements below are retained unchanged as historical evidence.
 
 ## Frozen pre-strength gates for the original 4/3/4 experiment
 
@@ -180,10 +241,9 @@ No failure was converted to a draw.
 ## Historical 4/3/4 stop decision
 
 The original approved plan required a stop rather than weakening search when the two-round horizon
-exceeded the frozen cutoff gate. That historical stop condition was met. The owner has since changed
-the horizon to one completed turn, so the next step is a fresh one-turn feasibility run rather than
-one of the previously listed selective-search or larger-compute alternatives. Until that rerun
-passes, this implementation still does **not**:
+exceeded the frozen cutoff gate. That historical stop condition was met. The owner then changed the
+horizon to one completed turn, and the fresh rerun documented above also failed. Milestone 4
+therefore remains stopped. This implementation does **not**:
 
 - freeze the provisional descriptor as the production heuristic;
 - run heuristic strength arenas;
@@ -191,5 +251,6 @@ passes, this implementation still does **not**:
 - publish a fresh checkpoint or primary runnable learned policy; or
 - make playing-strength claims.
 
-The revised one-turn horizon is now the binding Milestone 4 direction. Production budget and
-determinization count remain intentionally unfrozen until the one-turn corpus is measured.
+The revised one-turn horizon remains the binding Milestone 4 direction, but it is not feasible under
+the tested exhaustive implementation and existing gates. Production budget and determinization
+count remain intentionally unfrozen pending an owner decision.

@@ -4,14 +4,16 @@
 compatibility, schema-v2 policy identity, scheduler/generation/arena routing, and private traces are
 implemented. Work Package 1's exact seed-50000 reproduction is complete. The original 4/3/4-turn
 benchmark failed its predeclared gates; on September 3, 2026 the owner replaced that horizon with a
-single completed-turn horizon and rejected selective continuation. The revised one-turn descriptor
-must now be re-benchmarked and frozen before training or strength evaluation. See
-`docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`.
+single completed-turn horizon and rejected selective continuation. The revised one-turn sweep has
+now also failed: no tested 400/800/1,600-transition budget at one, two, or four determinizations met
+the cutoff, immediate-fallback, per-category completion, or throughput gates. No production search
+descriptor is frozen, and Milestone 4 is stopped before heuristic arenas, training, or strength
+evaluation. See `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`.
 
-**Planning status (September 2, 2026):** approved for implementation; no implementation work has
-started. Milestone 3 remains an immutable historical pilot. Its repetition-aware selector is
-retained as an experimental variant, while the primary learned-policy line returns to the original
-`temperature-softmax-v1` selector architecture.
+**Historical planning status (September 2, 2026):** approved for implementation; no implementation
+work had started at that time. Milestone 3 remains an immutable historical pilot. Its
+repetition-aware selector is retained as an experimental variant, while the primary learned-policy
+line returns to the original `temperature-softmax-v1` selector architecture.
 
 ## 1. Milestone outcome
 
@@ -414,8 +416,8 @@ Milestone 4 does not initially include:
 ## 13. Completion checklist
 
 - [ ] Search descriptor, evaluator formula, horizon, sampling contract, and numeric feasibility
-      gates frozen. The one-turn horizon is frozen; production budget/determinizations await the
-      revised feasibility run.
+      gates frozen. The one-turn horizon was measured, but all tested budgets/determinization
+      counts failed; no production descriptor is frozen.
 - [x] `public-covered-v1` adopted with compatibility and non-leak tests.
 - [x] Original seed-50000 failure reproduced with a complete diagnostic trace.
 - [x] Stronger heuristic implemented for paid actions, setup, and effect choices.

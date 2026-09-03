@@ -24,9 +24,11 @@ Milestone 4 implemented:
 The September 3, 2026 representative feasibility sweep found that the original exhaustive 4/3/4
 completed-turn horizon had a 100% route-cutoff rate at the provisional 400-transition budget and
 was too slow for generation. The owner then replaced it with an exhaustive one completed-turn
-horizon and rejected selective continuation. Fresh training and strength arenas remain paused only
-until the one-turn corpus selects and freezes a production budget. See the feasibility addendum
-before running a new iteration.
+horizon and rejected selective continuation. The one-turn 400/800/1,600-transition sweep also
+failed: the best full-depth completion was 90.3%, immediate-leaf fallback remained 9.7%, and
+one-determinization throughput reached at most 0.50 roots/s against a 2.0 roots/s gate. No
+production search descriptor is frozen. Fresh training and strength arenas remain stopped pending
+a project decision; see the feasibility addendum before running a new iteration.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`

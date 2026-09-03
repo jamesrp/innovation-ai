@@ -27,8 +27,11 @@ failure traces. The exact historical seed-50000 cycle has been reproduced and ex
 September 3, 2026 feasibility corpus found that the original exhaustive 4/3/4 completed-turn
 horizon misses its cutoff and throughput gates even at the provisional budget. The owner then
 replaced that horizon with one completed player turn for every search root and explicitly rejected
-selective continuation. The next step is to re-benchmark and freeze the one-turn descriptor before
-training or strength arenas; see `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. The primary learned
+selective continuation. The one-turn 400/800/1,600-transition sweep also failed: its best
+completion rate was 90.3% with a 9.7% immediate-leaf rate, while one-determinization throughput
+ranged from only 0.14 to 0.50 roots/s against a 2.0 roots/s gate. No production descriptor is
+frozen; heuristic arenas, training, and evaluation are stopped pending a project decision. See
+`docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. The primary learned
 selector remains `temperature-softmax-v1`; the repetition-aware selector remains an experimental
 comparator.
 
