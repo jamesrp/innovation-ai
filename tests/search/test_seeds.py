@@ -18,16 +18,20 @@ from innovation_ai.search.contracts import DEFAULT_SAMPLER_SEED_DERIVATION
 def test_search_seed_contract_matches_descriptor_and_is_deterministic() -> None:
     descriptor = SearchDescriptor()
     factory = SearchRngFactory("run", 4)
-    arguments = {
-        "game_id": "game-1",
-        "chooser": PlayerId.PLAYER_2,
-        "decision_id": 17,
-        "policy_id": "policy",
-        "search_descriptor_id": descriptor.descriptor_id,
-    }
-
-    first = factory.seed_for_decision(**arguments)
-    second = factory.seed_for_decision(**arguments)
+    first = factory.seed_for_decision(
+        game_id="game-1",
+        chooser=PlayerId.PLAYER_2,
+        decision_id=17,
+        policy_id="policy",
+        search_descriptor_id=descriptor.descriptor_id,
+    )
+    second = factory.seed_for_decision(
+        game_id="game-1",
+        chooser=PlayerId.PLAYER_2,
+        decision_id=17,
+        policy_id="policy",
+        search_descriptor_id=descriptor.descriptor_id,
+    )
 
     assert SEARCH_RNG_VERSION == DEFAULT_SAMPLER_SEED_DERIVATION
     assert first == second
@@ -100,15 +104,56 @@ def test_search_seed_is_domain_separated_by_every_route_identity() -> None:
 
 
 def test_search_seed_rejects_wrong_contract_version_and_invalid_identity() -> None:
+    descriptor = SearchDescriptor()
+    assert SearchRngFactory(b"bytes", 0).seed_for_decision(
+        game_id="bytes",
+        chooser=PlayerId.PLAYER_1,
+        decision_id=1,
+        policy_id="policy",
+        search_descriptor_id=descriptor.descriptor_id,
+    )
+    with pytest.raises(SearchSeedError, match="non-empty bytes"):
+        seed_digest(b"")
+    with pytest.raises(SearchSeedError, match="int, string, or bytes"):
+        SearchRngFactory(1.5, 0)  # type: ignore[arg-type]
+    with pytest.raises(SearchSeedError, match="generation must be an integer"):
+        SearchRngFactory(1, True)
+    with pytest.raises(SearchSeedError, match="generation cannot be negative"):
+        SearchRngFactory(1, -1)
     with pytest.raises(SearchSeedError, match="unsupported"):
         SearchRngFactory(1, 0, version="other")
     with pytest.raises(SearchSeedError, match="boolean"):
-        SearchRngFactory(True, 0)  # type: ignore[arg-type]
+        SearchRngFactory(True, 0)
+    factory = SearchRngFactory(1, 0)
+    with pytest.raises(SearchSeedError, match="game ID"):
+        factory.seed_for_decision(
+            game_id="",
+            chooser=PlayerId.PLAYER_1,
+            decision_id=1,
+            policy_id="policy",
+            search_descriptor_id=descriptor.descriptor_id,
+        )
+    with pytest.raises(SearchSeedError, match="decision ID"):
+        factory.seed_for_decision(
+            game_id="game",
+            chooser=PlayerId.PLAYER_1,
+            decision_id=0,
+            policy_id="policy",
+            search_descriptor_id=descriptor.descriptor_id,
+        )
     with pytest.raises(SearchSeedError, match="policy ID"):
-        SearchRngFactory(1, 0).seed_for_decision(
+        factory.seed_for_decision(
             game_id="game",
             chooser=PlayerId.PLAYER_1,
             decision_id=1,
             policy_id="",
-            search_descriptor_id=SearchDescriptor().descriptor_id,
+            search_descriptor_id=descriptor.descriptor_id,
+        )
+    with pytest.raises(SearchSeedError, match="search descriptor ID"):
+        factory.seed_for_decision(
+            game_id="game",
+            chooser=PlayerId.PLAYER_1,
+            decision_id=1,
+            policy_id="policy",
+            search_descriptor_id="",
         )

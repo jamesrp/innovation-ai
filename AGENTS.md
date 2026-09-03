@@ -25,6 +25,8 @@ Read these before changing engine or ML behavior:
 9. `docs/MILESTONE_3_REPORT.md` — pilot, cycle, selector experiment, profiling, and limitations.
 10. `docs/MILESTONE_4_PLAN.md` — current sampled-search heuristic, observability, retraining, and
     evaluation plan.
+11. `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md` — September 3, 2026 search measurements,
+    historical reproduction evidence, frozen gates, and the current feasibility stop.
 
 Do not silently resolve a rules ambiguity. Record the interpretation and a focused test; if
 it materially changes gameplay or observations, request a project decision first.

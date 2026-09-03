@@ -1,5 +1,12 @@
 # Milestone 4 Plan — Player-Safe Search Heuristic and Retraining
 
+**Implementation status (September 3, 2026):** the player-safe search stack, public-covered
+compatibility, schema-v2 policy identity, scheduler/generation/arena routing, and private traces are
+implemented. Work Package 1's exact seed-50000 reproduction is complete. The Work Package 0
+representative benchmark failed the predeclared horizon/cutoff/throughput gates, so training and
+strength evaluation are stopped pending a project decision. See
+`docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`.
+
 **Planning status (September 2, 2026):** approved for implementation; no implementation work has
 started. Milestone 3 remains an immutable historical pilot. Its repetition-aware selector is
 retained as an experimental variant, while the primary learned-policy line returns to the original
@@ -421,16 +428,16 @@ Milestone 4 does not initially include:
 ## 13. Completion checklist
 
 - [ ] Search descriptor, evaluator formula, horizon, sampling contract, and numeric feasibility
-      gates frozen.
-- [ ] `public-covered-v1` adopted with compatibility and non-leak tests.
-- [ ] Original seed-50000 failure reproduced with a complete diagnostic trace.
-- [ ] Stronger heuristic implemented for paid actions, setup, and effect choices.
+      gates frozen. The contract and gates are frozen, but no production descriptor passed them.
+- [x] `public-covered-v1` adopted with compatibility and non-leak tests.
+- [x] Original seed-50000 failure reproduced with a complete diagnostic trace.
+- [x] Stronger heuristic implemented for paid actions, setup, and effect choices.
 - [ ] Fixed heuristic-versus-simple/random validation completed.
-- [ ] Primary learned policy template restored to `temperature-softmax-v1` and instantiated with the
-      fresh compatible checkpoint.
+- [x] Primary learned policy template restored to `temperature-softmax-v1`; it is intentionally
+      not instantiated because no compatible fresh checkpoint was trained.
 - [ ] New seed-50000 two-seat diagnostic completed without unpublished/incomplete outcomes.
 - [ ] Fresh bootstrap, learned generation, training, and report completed.
 - [ ] Fixed candidate preflight against random, simple heuristic, and new heuristic completed.
-- [ ] Repetition-aware selector retained only as an explicit comparator.
+- [x] Repetition-aware selector retained only as an explicit comparator.
 - [ ] `make check` and relevant fuzz/determinization/search soaks pass.
 - [ ] Focused commits pushed to `origin`.

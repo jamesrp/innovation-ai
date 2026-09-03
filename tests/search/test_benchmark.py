@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -51,7 +53,8 @@ def test_tiny_search_feasibility_run_has_complete_counter_schema() -> None:
     assert payload["content_digest"] == report.content_digest
     assert payload["measurements"] == [item.payload()]
     assert "state" not in json.dumps(payload)
-    assert payload["config"]["horizons"] == {
+    config = cast(dict[str, object], payload["config"])
+    assert cast(dict[str, int], config["horizons"]) == {
         "root_turn": FROZEN_ROOT_TURN_HORIZON,
         "opponent_turn": FROZEN_OPPONENT_TURN_HORIZON,
         "starting_meld": FROZEN_STARTING_MELD_HORIZON,
@@ -83,7 +86,7 @@ def test_content_digest_excludes_live_performance_fields() -> None:
     assert rebuilt.to_json() != report.to_json()
 
 
-def test_json_and_markdown_writers_emit_schema(tmp_path) -> None:
+def test_json_and_markdown_writers_emit_schema(tmp_path: Path) -> None:
     report = run_search_feasibility(_tiny_config())
     json_path = write_search_feasibility_json(report, tmp_path / "search.json")
     markdown_path = write_search_feasibility_markdown(report, tmp_path / "search.md")

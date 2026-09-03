@@ -10,10 +10,18 @@ import pytest
 
 from innovation_ai.harness.diagnostics import (
     DIAGNOSTIC_TRACE_PRIVACY,
+    AchievementChange,
+    CardMovement,
+    DiagnosticJsonObject,
     DiagnosticTraceError,
+    DiagnosticTraceFooter,
     DiagnosticTraceHeader,
     LearnedDecisionSummary,
+    NoProgressTelemetry,
     PrivateDiagnosticTraceRecorder,
+    RepeatedPaidActionWindow,
+    SplayChange,
+    SupplyChange,
     derive_no_progress_telemetry,
     read_diagnostic_trace,
     redacted_diagnostic_summary,
@@ -27,11 +35,24 @@ from innovation_ai.innovation.protocol import apply_action, current_decision
 from innovation_ai.innovation.state import (
     ExplicitPlayerPosition,
     GameState,
+    TerminalReason,
+    TerminalResult,
     build_explicit_state,
     build_setup_state,
 )
-from innovation_ai.innovation.types import CardId, Color, PlayerId
-from innovation_ai.search.contracts import RootSelectionTelemetry, SearchDescriptor
+from innovation_ai.innovation.terminal import apply_terminal
+from innovation_ai.innovation.types import (
+    CardId,
+    Color,
+    PlayerId,
+    SpecialAchievementId,
+    SplayDirection,
+)
+from innovation_ai.search.contracts import (
+    RootSelectionTelemetry,
+    SearchDescriptor,
+    SearchRouteTelemetry,
+)
 from innovation_ai.search.minimax import MinimaxSelection, SearchStatistics, action_key
 
 _DIGEST = "sha256:" + "1" * 64
@@ -268,7 +289,9 @@ def test_no_progress_telemetry_detects_noop_dogma_and_zone_changes() -> None:
     assert movement.no_op_dogma is False
 
 
-def test_authoritative_snapshots_require_two_explicit_markers_and_verify() -> None:
+def test_authoritative_snapshots_require_two_explicit_markers_and_verify(
+    tmp_path: Path,
+) -> None:
     state = _playing_state(405)
     with pytest.raises(ValueError, match="private-debug"):
         _header(state, snapshots=True)
@@ -284,8 +307,12 @@ def test_authoritative_snapshots_require_two_explicit_markers_and_verify() -> No
         _baseline_audit(decision, action),
     )
     trace = recorder.finish("stopped")
-    assert trace.steps[0].before_snapshot is not None
-    assert trace.steps[0].after_snapshot is not None
+    path = tmp_path / "snapshots.jsonl.gz"
+    write_diagnostic_trace(path, trace)
+    loaded = read_diagnostic_trace(path)
+    assert loaded == trace
+    assert loaded.steps[0].before_snapshot is not None
+    assert loaded.steps[0].after_snapshot is not None
 
 
 def test_strict_reader_rejects_noncanonical_unknown_and_concatenated_members(
@@ -358,6 +385,246 @@ def test_footer_seals_chain_and_aggregates_without_turning_failure_into_draw() -
     assert trace.footer.terminal_result is None
     assert trace.footer.records_digest.startswith("sha256:")
     assert trace.footer.no_progress_totals["card_movements"] == 1
+
+
+def test_rich_learned_and_search_trace_round_trips_and_redacts(tmp_path: Path) -> None:
+    state = replace(_playing_state(410), paid_actions_remaining=2)
+    recorder = PrivateDiagnosticTraceRecorder(_header(state), state)
+
+    learned_decision = current_decision(state)
+    assert learned_decision is not None
+    learned_action = learned_decision.legal_actions[0]
+    sample_values = tuple(
+        (0.4 + index / 100, 0.6 + index / 100)
+        for index in range(len(learned_decision.legal_actions))
+    )
+    mean_values = tuple(sum(values) / len(values) for values in sample_values)
+    learned_selection = PolicySelection(
+        "learned-policy",
+        "game-001",
+        learned_decision.decision_id,
+        learned_action,
+        mean_values[0],
+        0.0,
+        "temperature-softmax-v1",
+        sample_values,
+        mean_values,
+        mean_values,
+        0,
+        (len(mean_values) - 1,),
+        mean_values[-1] - mean_values[-2] if len(mean_values) > 1 else None,
+        _DIGEST,
+        None,
+    )
+    learned_audit = PolicyDecisionAudit(
+        Submission("game-001", learned_action),
+        learned_decision.chooser,
+        learned_selection,
+        "learned",
+    )
+    after_learned = apply_action(state, learned_action).state
+    recorder.record_step(after_learned, learned_decision, learned_audit)
+
+    search_decision = current_decision(after_learned)
+    assert search_decision is not None
+    search_action = search_decision.legal_actions[0]
+    descriptor = SearchDescriptor()
+    keys = tuple(action_key(item) for item in search_decision.legal_actions)
+    means = tuple(0.25 for _ in keys)
+    route = SearchRouteTelemetry(
+        0,
+        0,
+        0.25,
+        1,
+        2,
+        3,
+        1,
+        1,
+        True,
+        False,
+        (keys[0],),
+    )
+    telemetry = RootSelectionTelemetry(
+        descriptor.descriptor_id,
+        keys,
+        means,
+        0,
+        (route,),
+        tuple(range(len(keys))),
+        _DIGEST,
+    )
+    statistics = SearchStatistics(1, 2, 3, 1, 0, 1, 1, 1, 0)
+    search_audit = PolicyDecisionAudit(
+        Submission("game-001", search_action),
+        search_decision.chooser,
+        None,
+        "search",
+        search_selection=MinimaxSelection(search_action, telemetry, statistics),
+    )
+    recorder.record_step(
+        apply_action(after_learned, search_action).state,
+        search_decision,
+        search_audit,
+    )
+    trace = recorder.finish("stopped")
+    path = tmp_path / "rich.jsonl.gz"
+    write_diagnostic_trace(path, trace)
+
+    loaded = read_diagnostic_trace(path)
+    assert loaded == trace
+    assert loaded.steps[0].learned is not None
+    assert loaded.steps[1].search is not None
+    redacted = redacted_diagnostic_summary(loaded)
+    first = redacted["steps"][0]  # type: ignore[index]
+    second = redacted["steps"][1]  # type: ignore[index]
+    assert isinstance(first, dict) and first["learned_aggregates"] is not None
+    assert isinstance(second, dict) and second["search_aggregates"] is not None
+
+
+def test_terminal_and_snapshot_trace_round_trip(tmp_path: Path) -> None:
+    terminal = TerminalResult(TerminalReason.CARD_EFFECT, (PlayerId.PLAYER_1,))
+    state = apply_terminal(build_explicit_state(), terminal)
+    recorder = PrivateDiagnosticTraceRecorder(
+        _header(state, snapshots=True, private_debug=True), state
+    )
+    trace = recorder.finish("card-effect", terminal_result=terminal)
+    path = tmp_path / "terminal.jsonl.gz"
+    write_diagnostic_trace(path, trace)
+
+    loaded = read_diagnostic_trace(path)
+    assert loaded.footer.terminal_result is not None
+    assert loaded.footer.failure is None
+    assert loaded.steps == ()
+
+
+def test_no_progress_tracks_splay_and_special_achievement_changes() -> None:
+    state = build_explicit_state(
+        positions=(
+            (
+                PlayerId.PLAYER_1,
+                ExplicitPlayerPosition(
+                    board=((Color.RED, (CardId("archery"), CardId("metalworking"))),),
+                ),
+            ),
+        )
+    )
+    player = state.player(PlayerId.PLAYER_1)
+    red = player.board.stack(Color.RED)
+    changed_board = player.board.replace_stack(replace(red, splay=SplayDirection.LEFT))
+    changed_player = replace(
+        player,
+        board=changed_board,
+        special_achievements=(SpecialAchievementId.EMPIRE,),
+    )
+    after = state.replace_player(changed_player)
+    decision = current_decision(state)
+    assert decision is not None
+    action = decision.legal_actions[0]
+
+    progress = derive_no_progress_telemetry(state, after, decision, action)
+
+    assert len(progress.splay_changes) == 1
+    assert progress.splay_changes[0].after == SplayDirection.LEFT.value
+    assert len(progress.achievements) == 1
+    assert progress.achievements[0].achievement_id == SpecialAchievementId.EMPIRE.value
+
+
+def test_diagnostic_value_contracts_reject_malformed_data() -> None:
+    state = _playing_state(411)
+    header = _header(state)
+    with pytest.raises(ValueError, match="source revision"):
+        replace(header, source_revision="")
+    with pytest.raises(ValueError, match="setup seed"):
+        replace(header, setup_seed=True)
+    with pytest.raises(ValueError, match="manifest digest"):
+        replace(header, manifest_digest="bad")
+    with pytest.raises(ValueError, match="version values"):
+        replace(header, versions={**_VERSIONS, "policy": ""})
+    with pytest.raises(ValueError, match="labels"):
+        replace(header, rng_seed_digests={"": _DIGEST})
+    with pytest.raises(ValueError, match="RNG seed digest"):
+        replace(header, rng_seed_digests={"policy": "bad"})
+
+    valid_summary = LearnedDecisionSummary(((0.5,),), (0.5,), (0.5,), 0, (0,), 0.0)
+    with pytest.raises(ValueError, match="non-empty"):
+        LearnedDecisionSummary((), (), (), 0, (), 0.0)
+    with pytest.raises(ValueError, match="per-determinization"):
+        LearnedDecisionSummary(((),), (0.5,), (0.5,), 0, (0,), 0.0)
+    with pytest.raises(ValueError, match="equal determinization"):
+        LearnedDecisionSummary(((0.5,), (0.4, 0.6)), (0.5, 0.5), (0.5, 0.5), 0, (0,), 0.0)
+    with pytest.raises(ValueError, match="finite"):
+        replace(valid_summary, margin=float("nan"))
+    with pytest.raises(ValueError, match="selected action index"):
+        replace(valid_summary, selected_action_index=1)
+    with pytest.raises(ValueError, match="tied action indices"):
+        replace(valid_summary, tied_action_indices=(0, 0))
+    with pytest.raises(ValueError, match="margin"):
+        replace(valid_summary, margin=-0.1)
+    with pytest.raises(ValueError, match="mean"):
+        replace(valid_summary, mean_values=(0.4,))
+
+    with pytest.raises(ValueError, match="change direction"):
+        SplayChange(PlayerId.PLAYER_1, Color.RED, "none", "none")
+    with pytest.raises(ValueError, match="achievement kind"):
+        AchievementChange(PlayerId.PLAYER_1, "empire", "other")
+    with pytest.raises(ValueError, match="age"):
+        SupplyChange(0, 1, 0, None, None)
+    with pytest.raises(ValueError, match="counts"):
+        SupplyChange(1, -1, 0, None, None)
+    with pytest.raises(ValueError, match="must alter"):
+        SupplyChange(1, 1, 1, None, None)
+
+    pattern: DiagnosticJsonObject = {"kind": "draw"}
+    with pytest.raises(ValueError, match="invalid size"):
+        RepeatedPaidActionWindow(0, (pattern,), 0, False)
+    with pytest.raises(ValueError, match="match count"):
+        RepeatedPaidActionWindow(4, (pattern,), 1, True)
+    with pytest.raises(ValueError, match="flag"):
+        RepeatedPaidActionWindow(4, (pattern,), 0, True)
+    with pytest.raises(ValueError, match="omit"):
+        RepeatedPaidActionWindow(
+            4,
+            ({"kind": "draw", "decision_id": 1},),
+            0,
+            False,
+        )
+
+    movement = CardMovement(CardId("agriculture"), "player-1.hand", "player-1.score")
+    with pytest.raises(ValueError, match="non-negative"):
+        NoProgressTelemetry((movement,), (), (), (), -1, 0, 0, 0, False, None)
+    with pytest.raises(ValueError, match="repeat a card"):
+        NoProgressTelemetry((movement, movement), (), (), (), 0, 0, 0, 0, False, None)
+
+    footer = DiagnosticTraceFooter(
+        0,
+        _DIGEST,
+        _DIGEST,
+        "stopped",
+        None,
+        None,
+        {
+            key: 0
+            for key in (
+                "card_movements",
+                "splay_changes",
+                "achievements",
+                "supply_changes",
+                "scored",
+                "melded",
+                "tucked",
+                "returned",
+                "no_op_dogmas",
+                "repeated_paid_actions",
+            )
+        },
+        _DIGEST,
+    )
+    with pytest.raises(ValueError, match="step count"):
+        replace(footer, step_count=-1)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        replace(footer, terminal_result={"reason": "x"}, failure={"type": "x"})
+    with pytest.raises(ValueError, match="totals"):
+        replace(footer, no_progress_totals={})
 
 
 def test_header_rejects_missing_version_provenance() -> None:

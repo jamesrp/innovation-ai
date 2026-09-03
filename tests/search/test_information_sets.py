@@ -15,7 +15,7 @@ from innovation_ai.innovation import (
 from innovation_ai.innovation.actions import DogmaAction
 from innovation_ai.innovation.observations import observe
 from innovation_ai.innovation.protocol import apply_action, current_decision, current_decisions
-from innovation_ai.innovation.state import EffectVariable, SupplyState
+from innovation_ai.innovation.state import EffectVariable, GameState, SupplyState
 from innovation_ai.search import (
     HiddenCardDomainKind,
     InformationSetSampler,
@@ -26,7 +26,7 @@ from innovation_ai.search import (
 )
 
 
-def _turn_state():
+def _turn_state() -> GameState:
     return build_explicit_state(
         positions=(
             (
@@ -159,6 +159,7 @@ def test_real_effect_choice_runtime_round_trips_and_preserves_hidden_aliases() -
         item.value for item in sampled.effect_variables if item.name == "search-test:hidden-alias"
     )
     assert isinstance(value, tuple) and value[0] == value[1]
+    assert isinstance(value[0], str)
     assert CardId(value[0]) in sampled.supply.pile(2)
     verify_sampled_state(spec, sampled)
 

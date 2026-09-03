@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import cast
 
 import pytest
-from support import scenario
 
 from innovation_ai.agents import RandomAgent
 from innovation_ai.harness import (
@@ -25,12 +24,17 @@ from innovation_ai.harness.policy_scheduler import (
 )
 from innovation_ai.innovation.actions import Decision, SemanticAction
 from innovation_ai.innovation.effects import load_effect_programs, start_dogma
-from innovation_ai.innovation.state import GameState
+from innovation_ai.innovation.state import (
+    ExplicitPlayerPosition,
+    GameState,
+    build_explicit_state,
+)
 from innovation_ai.innovation.types import CardId, Color, PlayerId
-from innovation_ai.search import SearchDescriptor
+from innovation_ai.search import PRODUCTION_SEARCH_DESCRIPTOR, SearchDescriptor
 from innovation_ai.search.information_sets import (
     InformationSetSampler as SearchInformationSetSampler,
 )
+from innovation_ai.search.information_sets import InformationSetSpec as SearchInformationSetSpec
 from innovation_ai.training.checkpoint import (
     DEFAULT_FALLBACK_AGENT_VERSION,
     LEGACY_DEFAULT_FALLBACK_AGENT,
@@ -120,7 +124,11 @@ def _policy(
         effects_fingerprint="fixture-effects",
         temperature=temperature,
         selector_version=selector_version,
-        **({} if search_descriptor_id is None else {"search_descriptor_id": search_descriptor_id}),
+        search_descriptor_id=(
+            PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+            if search_descriptor_id is None
+            else search_descriptor_id
+        ),
     )
 
 
@@ -280,12 +288,20 @@ def test_v2_learned_routes_starting_and_effect_choices_through_search() -> None:
         for selection in setup.search_selections
     )
 
-    effect_state = (
-        scenario()
-        .board(PlayerId.PLAYER_1, Color.YELLOW, ("agriculture",))
-        .board(PlayerId.PLAYER_2, Color.RED, ("archery",))
-        .hand(PlayerId.PLAYER_1, ("writing",))
-        .build()
+    effect_state = build_explicit_state(
+        positions=(
+            (
+                PlayerId.PLAYER_1,
+                ExplicitPlayerPosition(
+                    hand=(CardId("writing"),),
+                    board=((Color.YELLOW, (CardId("agriculture"),)),),
+                ),
+            ),
+            (
+                PlayerId.PLAYER_2,
+                ExplicitPlayerPosition(board=((Color.RED, (CardId("archery"),)),)),
+            ),
+        )
     )
     paused = start_dogma(
         effect_state,
@@ -363,7 +379,7 @@ def test_search_builder_receives_only_live_state_and_exact_decision_boundary() -
     calls: list[tuple[GameState, Decision]] = []
 
     class _RecordingBuilder:
-        def build(self, state: GameState, decision: Decision):
+        def build(self, state: GameState, decision: Decision) -> SearchInformationSetSpec:
             calls.append((state, decision))
             return actual_builder.build(state, decision)
 

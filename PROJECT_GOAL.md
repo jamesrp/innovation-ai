@@ -20,11 +20,15 @@ one-ply afterstate selection, frozen-checkpoint iterative self-play, paired aren
 CPU profiling. The implementation runs on the CPU-only exe.dev development box and preserves
 clean paths to parallel actors and GPU-backed training or inference.
 
-The next goal is Milestone 4: replace the deliberately weak heuristic with bounded player-safe
-sampled minimax, use it as the learned policy's setup/effect continuation, add failure-focused
-selection and cycle traces, retrain under public board-card information, and rerun fixed paired
-arenas. The primary learned selector returns to `temperature-softmax-v1`; the repetition-aware
-selector remains an experimental comparator rather than the default candidate.
+Milestone 4's safe implementation foundation is now present: bounded root-sampled minimax,
+player-safe setup/effect determinizations, public board-card information, schema-v2 search-aware
+policy identities, scheduler/generation/arena routing, strategic-cycle keys, and complete private
+failure traces. The exact historical seed-50000 cycle has been reproduced and explained. The
+September 3, 2026 feasibility corpus found that the approved exhaustive 4/3/4 completed-turn
+horizon misses its cutoff and throughput gates even at the provisional budget, so training and
+strength arenas are stopped pending a project decision on horizon, selective search, or compute;
+see `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. The primary learned selector remains
+`temperature-softmax-v1`; the repetition-aware selector remains an experimental comparator.
 
 Preserve the engine as an explicit state machine. Every player choice remains a semantic
 `Decision`, and applying one semantic `Action` advances to the next decision or terminal result.

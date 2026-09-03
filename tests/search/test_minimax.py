@@ -18,12 +18,13 @@ from innovation_ai.innovation.state import (
     TerminalResult,
     build_setup_state,
 )
-from innovation_ai.innovation.types import PlayerId
+from innovation_ai.innovation.types import CardId, PlayerId
 from innovation_ai.search import (
     DeterministicSampledMinimax,
     InformationSetSampler,
     InformationSetSpec,
     InformationSetSpecBuilder,
+    MinimaxSelection,
     SearchDescriptor,
     SearchHooks,
     action_key,
@@ -118,7 +119,7 @@ def _search(
     opponent_depth: int = 1,
     starting_depth: int = 1,
     samples: tuple[GameState, ...] | None = None,
-):
+) -> MinimaxSelection:
     chosen_samples = samples or (sample,)
     descriptor = SearchDescriptor(
         determinization_count=len(chosen_samples),
@@ -134,8 +135,8 @@ def _search(
 
 def test_action_key_ignores_only_decision_identity() -> None:
     assert action_key(DrawAction(1)) == action_key(DrawAction(99))
-    assert action_key(ChooseStartingMeldAction(1, "pottery")) != action_key(
-        ChooseStartingMeldAction(2, "tools")
+    assert action_key(ChooseStartingMeldAction(1, CardId("pottery"))) != action_key(
+        ChooseStartingMeldAction(2, CardId("tools"))
     )
 
 
@@ -175,7 +176,10 @@ def test_minimax_uses_each_decision_chooser_for_nested_max_and_min() -> None:
     for index, root_action in enumerate(spec.legal_actions):
         opponent_node = 310 + index * 100
         graph.edges[(300, action_key(root_action))] = (opponent_node, 0)
-        opponent_actions = (DrawAction(900 + index), DeclineAction(900 + index))
+        opponent_actions: tuple[SemanticAction, ...] = (
+            DrawAction(900 + index),
+            DeclineAction(900 + index),
+        )
         opponent = PlayerId.PLAYER_2 if spec.chooser is PlayerId.PLAYER_1 else PlayerId.PLAYER_1
         graph.decisions[opponent_node] = _decision(
             root_decision,
@@ -187,7 +191,10 @@ def test_minimax_uses_each_decision_chooser_for_nested_max_and_min() -> None:
         for opponent_index, opponent_action in enumerate(opponent_actions):
             root_node = opponent_node + 10 + opponent_index
             graph.edges[(opponent_node, action_key(opponent_action))] = (root_node, 0)
-            root_actions = (DrawAction(950 + root_node), DeclineAction(950 + root_node))
+            root_actions: tuple[SemanticAction, ...] = (
+                DrawAction(950 + root_node),
+                DeclineAction(950 + root_node),
+            )
             graph.decisions[root_node] = _decision(
                 root_decision, root_actions[0].decision_id, spec.chooser, root_actions
             )
@@ -258,6 +265,7 @@ def test_path_repetition_cuts_to_evaluator_instead_of_a_draw() -> None:
     root = replace(sample, next_event_id=700)
     root_decision = replace(current_decisions(sample)[0], legal_actions=spec.legal_actions)
     graph = _Graph(spec, {700: root_decision}, {}, {702: 0.37}, {}, {701: "cycle", 702: "cycle"})
+    assert graph.digest_aliases is not None
     for index, root_action in enumerate(spec.legal_actions):
         first = 701 + index * 10
         second = 702 + index * 10
