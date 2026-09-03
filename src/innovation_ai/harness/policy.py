@@ -60,6 +60,15 @@ class PolicySelection:
     action: SemanticAction
     mean_value: float
     temperature: float
+    selector_version: str = "temperature-softmax-v1"
+    action_sample_values: tuple[tuple[float, ...], ...] = ()
+    action_mean_values: tuple[float, ...] = ()
+    selector_scores: tuple[float, ...] = ()
+    selected_action_index: int = 0
+    tied_best_action_indices: tuple[int, ...] = ()
+    selection_margin: float | None = None
+    sampler_seed_digest: str | None = None
+    selector_seed_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not self.policy_id or not self.game_id:
@@ -70,6 +79,45 @@ class PolicySelection:
             raise ValueError("policy selection value must be in [0, 1]")
         if self.temperature < 0.0:
             raise ValueError("policy selection temperature cannot be negative")
+        if not self.selector_version:
+            raise ValueError("policy selection selector version cannot be empty")
+        audit_lengths = {
+            len(self.action_sample_values),
+            len(self.action_mean_values),
+            len(self.selector_scores),
+        }
+        if audit_lengths != {0}:
+            if 0 in audit_lengths or len(audit_lengths) != 1:
+                raise ValueError("policy selection action audit lengths differ")
+            action_count = len(self.action_mean_values)
+            if not 0 <= self.selected_action_index < action_count:
+                raise ValueError("policy selection selected action index is out of range")
+            if any(not samples for samples in self.action_sample_values):
+                raise ValueError("policy selection action samples cannot be empty")
+            if any(
+                not 0.0 <= value <= 1.0
+                for samples in self.action_sample_values
+                for value in samples
+            ):
+                raise ValueError("policy selection samples must be in [0, 1]")
+            if any(not 0.0 <= value <= 1.0 for value in self.action_mean_values):
+                raise ValueError("policy selection action means must be in [0, 1]")
+            if tuple(sorted(set(self.tied_best_action_indices))) != self.tied_best_action_indices:
+                raise ValueError("policy selection tied indices must be unique and sorted")
+            if any(index < 0 or index >= action_count for index in self.tied_best_action_indices):
+                raise ValueError("policy selection tied index is out of range")
+        elif self.selected_action_index != 0 or self.tied_best_action_indices:
+            raise ValueError("policy selection empty audit cannot carry action indices")
+        if self.selection_margin is not None and self.selection_margin < 0.0:
+            raise ValueError("policy selection margin cannot be negative")
+        for name, digest in (
+            ("sampler", self.sampler_seed_digest),
+            ("selector", self.selector_seed_digest),
+        ):
+            if digest is not None and (
+                not digest.startswith("sha256:") or len(digest) != len("sha256:") + 64
+            ):
+                raise ValueError(f"policy selection {name} seed digest is invalid")
 
 
 class PlayerRelation(StrEnum):

@@ -63,6 +63,12 @@ def test_temperature_zero_is_legal_order_argmax_and_terminal_needs_no_evaluator(
     )
     assert selection.action == draw
     assert selection.mean_value == 1.0
+    assert selection.action_sample_values == ((1.0,),)
+    assert selection.action_mean_values == (1.0,)
+    assert selection.selector_scores == (1.0,)
+    assert selection.selected_action_index == 0
+    assert selection.tied_best_action_indices == (0,)
+    assert selection.selection_margin is None
 
     tied = (ActionValue(draw, (0.5,), 0.5), ActionValue(meld, (0.5,), 0.5))
     assert choose_temperature_action(tied, 0.0).action == draw
@@ -125,6 +131,13 @@ def test_selector_version_dispatch_changes_choice_without_changing_reported_valu
 
     assert selection.action == draw
     assert selection.mean_value == 0.61
+    assert selection.selector_version == REPETITION_AWARE_SELECTOR_VERSION
+    assert selection.action_sample_values == ((0.70,), (0.61,))
+    assert selection.action_mean_values == (0.70, 0.61)
+    assert selection.selector_scores == pytest.approx((0.5, 0.61))
+    assert selection.selected_action_index == 1
+    assert selection.tied_best_action_indices == (1,)
+    assert selection.selection_margin == pytest.approx(0.11)
     with pytest.raises(ValueError, match="unsupported selector version"):
         select_expansion_action(
             policy_id="policy-invalid",

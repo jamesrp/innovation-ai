@@ -242,6 +242,7 @@ class _LearnedPending:
     request: PendingGameDecision
     assignment: LearnedPolicyAssignment
     expansion: CandidateExpansion
+    sampler_seed_digest: str
 
 
 PolicyAssignmentKey = str | tuple[str, PlayerId]
@@ -372,6 +373,17 @@ class PolicyScheduler:
             if evaluated is None:  # terminal-only expansion has an empty value tuple
                 evaluated = ()
             try:
+                selector_rng = (
+                    None
+                    if item.assignment.descriptor.temperature == 0.0
+                    else self._rng_factory.for_decision(
+                        game_id=item.request.game_id,
+                        chooser=item.request.decision.chooser,
+                        decision_id=item.request.decision.decision_id,
+                        domain=SelectionDomain.TEMPERATURE,
+                        policy_id=item.assignment.descriptor.policy_id,
+                    )
+                )
                 selection = select_expansion_action(
                     policy_id=item.assignment.descriptor.policy_id,
                     game_id=item.request.game_id,
@@ -382,16 +394,13 @@ class PolicyScheduler:
                     temperature=item.assignment.descriptor.temperature,
                     selector_version=item.assignment.descriptor.selector_version,
                     recent_actions=self._recent_actions_for(item),
-                    rng=(
-                        None
-                        if item.assignment.descriptor.temperature == 0.0
-                        else self._rng_factory.for_decision(
-                            game_id=item.request.game_id,
-                            chooser=item.request.decision.chooser,
-                            decision_id=item.request.decision.decision_id,
-                            domain=SelectionDomain.TEMPERATURE,
-                            policy_id=item.assignment.descriptor.policy_id,
-                        )
+                    rng=selector_rng,
+                )
+                selection = replace(
+                    selection,
+                    sampler_seed_digest=item.sampler_seed_digest,
+                    selector_seed_digest=(
+                        None if selector_rng is None else seed_digest(selector_rng.seed)
                     ),
                 )
             except SelectionError as error:
@@ -598,7 +607,12 @@ class PolicyScheduler:
             game_id=request.game_id,
             evaluator_key=assignment.evaluator_key,
         )
-        return _LearnedPending(request, assignment, expansion)
+        return _LearnedPending(
+            request,
+            assignment,
+            expansion,
+            seed_digest(sampler_seed),
+        )
 
     def _sampler_failure_audit(
         self,

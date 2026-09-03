@@ -395,11 +395,18 @@ def select_expansion_action(
         ),
     )
     if selector_version == SELECTOR_VERSION:
+        selector_scores = tuple(item.mean_value for item in values)
         selected = choose_temperature_action(values, temperature, rng)
     elif selector_version == REPETITION_AWARE_SELECTOR_VERSION:
+        selector_scores = tuple(_selector_score(item, recent_actions) for item in values)
         selected = choose_repetition_aware_action(values, recent_actions, temperature, rng)
     else:
         raise SelectionError(f"unsupported selector version {selector_version!r}")
+    selected_index = next(index for index, item in enumerate(values) if item is selected)
+    best_score = max(selector_scores)
+    tied_best = tuple(index for index, score in enumerate(selector_scores) if score == best_score)
+    ordered_scores = sorted(selector_scores, reverse=True)
+    margin = best_score - ordered_scores[1] if len(ordered_scores) > 1 else None
     return PolicySelection(
         policy_id,
         game_id,
@@ -407,6 +414,13 @@ def select_expansion_action(
         selected.action,
         selected.mean_value,
         float(temperature),
+        selector_version,
+        tuple(item.sample_values for item in values),
+        tuple(item.mean_value for item in values),
+        selector_scores,
+        selected_index,
+        tied_best,
+        margin,
     )
 
 
