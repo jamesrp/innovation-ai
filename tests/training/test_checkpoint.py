@@ -25,6 +25,41 @@ from innovation_ai.training.checkpoint import (
 from innovation_ai.training.encoding import build_encoder_manifest
 from innovation_ai.training.model import ValueNetwork
 
+LEGACY_POLICY_PAYLOAD: dict[str, object] = {
+    "action_schema_version": 1,
+    "afterstate_boundary_semantics_version": "immediate-one-transition-v1",
+    "card_data_fingerprint": (
+        "sha256:23fc84b70f401bba3e8d0abaaad0c28978cdaf076aef45e9e0cfc4b5810d5e86"
+    ),
+    "checkpoint_id": "sha256:293de9146420a204c460683a4af2f3ec4a069fadc8617ba52d0d19c3801c9c20",
+    "decision_schema_version": 3,
+    "determinization_count": 1,
+    "effects_fingerprint": (
+        "sha256:8104ec4477ff3c11343e72b4dd4cfbac4330f4cee97d40383d44c8992c65e237"
+    ),
+    "encoder_layout_fingerprint": (
+        "sha256:b472a8911f444bcf7920ff89fab2ff55aa23f054747242b538c32a7851c5b2b5"
+    ),
+    "engine_version": "0.2.0",
+    "fallback_agent": "simple-heuristic",
+    "fallback_agent_version": "v1",
+    "information_policy_version": "rulebook-private-covered-v1",
+    "information_set_sampler_version": "information-set-sampler-v1",
+    "observation_schema_version": 3,
+    "policy_id": "sha256:0c3f5e8e263c7aae5011deda9fcd269eff06090ec3bce9116022db82a5491d00",
+    "public_boundary_schema_version": 1,
+    "rules_version": "innovation-base-third-edition-2p-v1",
+    "sampler_rng_version": "sha256-counter-v1",
+    "schema_version": 1,
+    "selector_rng_version": "sha256-domain-separated-v1",
+    "selector_version": "temperature-softmax-v1",
+    "temperature": 0.15,
+    "value_position_schema_version": 1,
+}
+LEGACY_POLICY_JSON = json.dumps(
+    LEGACY_POLICY_PAYLOAD, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+)
+
 
 def _model(input_dimension: int, output_bias: float = 0.0) -> ValueNetwork:
     model = ValueNetwork(input_dimension)
@@ -137,13 +172,10 @@ def test_policy_descriptor_identity_is_content_derived_and_checkpoint_compatible
         )
 
 
-def test_real_pilot_001_schema_v1_policy_preserves_payload_and_identity() -> None:
-    path = (
-        Path(__file__).parents[2]
-        / "artifacts/runs/pilot-001/policies"
-        / "sha256:0c3f5e8e263c7aae5011deda9fcd269eff06090ec3bce9116022db82a5491d00.json"
-    )
-    original = path.read_text(encoding="utf-8").strip()
+def test_real_pilot_001_schema_v1_policy_preserves_payload_and_identity(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-policy.json"
+    path.write_text(LEGACY_POLICY_JSON, encoding="utf-8")
+    original = LEGACY_POLICY_JSON
     descriptor = load_policy_descriptor(path)
 
     assert descriptor.schema_version == 1
@@ -198,13 +230,7 @@ def test_schema_v2_policy_round_trip_search_identity_and_tampering(tmp_path: Pat
     with pytest.raises(PolicyCompatibilityError, match="fields differ from schema"):
         PolicyDescriptor.from_payload(missing)
 
-    v1_with_v2_field = json.loads(
-        (
-            Path(__file__).parents[2]
-            / "artifacts/runs/pilot-001/policies"
-            / "sha256:0c3f5e8e263c7aae5011deda9fcd269eff06090ec3bce9116022db82a5491d00.json"
-        ).read_text(encoding="utf-8")
-    )
+    v1_with_v2_field = json.loads(LEGACY_POLICY_JSON)
     v1_with_v2_field["search_descriptor_id"] = PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
     with pytest.raises(PolicyCompatibilityError, match="fields differ from schema"):
         PolicyDescriptor.from_payload(v1_with_v2_field)

@@ -75,6 +75,12 @@ from innovation_ai.search.minimax import (
     select_minimax_action,
     select_sampled_minimax,
 )
+from innovation_ai.search.seeds import (
+    SEARCH_RNG_VERSION,
+    SearchRngFactory,
+    SearchSeedError,
+    seed_digest,
+)
 
 __all__ = [
     "DEFAULT_SEARCH_DESCRIPTOR",
@@ -89,6 +95,7 @@ __all__ = [
     "PRODUCTION_ROUTE_TRANSITION_BUDGET",
     "PRODUCTION_SEARCH_DESCRIPTOR",
     "SEARCH_DESCRIPTOR_SCHEMA_VERSION",
+    "SEARCH_RNG_VERSION",
     "SEARCH_TELEMETRY_SCHEMA_VERSION",
     "SYNTHETIC_SETUP_RNG_VERSION",
     "SYNTHETIC_SETUP_SEED",
@@ -122,7 +129,9 @@ __all__ = [
     "SearchHooks",
     "SearchInputError",
     "SearchInvariantError",
+    "SearchRngFactory",
     "SearchRouteTelemetry",
+    "SearchSeedError",
     "SearchSelection",
     "SearchStatistics",
     "StateEvaluator",
@@ -139,6 +148,7 @@ __all__ = [
     "evaluate_state",
     "sample_information_set",
     "search_minimax",
+    "seed_digest",
     "select_minimax_action",
     "select_sampled_minimax",
     "terminal_ordering",

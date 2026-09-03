@@ -1,9 +1,10 @@
-"""Pull-runner scheduler for the information-safe learned afterstate policy.
+"""Pull-runner scheduler for learned afterstates and player-safe sampled search.
 
 The scheduler is deliberately the only orchestration layer that sees both a
-live runner state (to build an audited information-set specification) and value
-evaluators.  It never applies candidate actions to that live state: all learned
-candidate expansion is performed solely on sampled reconstructed states.
+live runner state (solely to build an audited information-set specification)
+and policy evaluators. Candidate actions are never scored on the authoritative
+state: learned expansion and sampled minimax operate only on reconstructed
+synthetic states.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from innovation_ai.agents.base import Agent
@@ -27,10 +28,32 @@ from innovation_ai.innovation.actions import DecisionKind, SemanticAction
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.state import GameState
 from innovation_ai.innovation.types import PlayerId
+from innovation_ai.search.contracts import (
+    DEFAULT_SAMPLER_SEED_DERIVATION,
+    PRODUCTION_SEARCH_DESCRIPTOR,
+    SearchDescriptor,
+)
+from innovation_ai.search.information_sets import (
+    InformationSetError as SearchInformationSetError,
+)
+from innovation_ai.search.information_sets import (
+    InformationSetSampler as SearchInformationSetSampler,
+)
+from innovation_ai.search.information_sets import (
+    InformationSetSpecBuilder as SearchInformationSetSpecBuilder,
+)
+from innovation_ai.search.minimax import (
+    DeterministicSampledMinimax,
+    MinimaxSelection,
+    SearchInvariantError,
+)
+from innovation_ai.search.seeds import SearchRngFactory, seed_digest
 from innovation_ai.training.checkpoint import (
     DEFAULT_SAMPLER_RNG_VERSION,
     DEFAULT_SELECTOR_RNG_VERSION,
     DEFAULT_SELECTOR_VERSION,
+    LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+    POLICY_DESCRIPTOR_SCHEMA_VERSION,
     PolicyDescriptor,
 )
 from innovation_ai.training.determinizations import (
@@ -72,6 +95,16 @@ class SamplerFailure(PolicySchedulerError):
         super().__init__(f"sampler failed for {game_id!r} decision {decision_id}: {cause}")
 
 
+class SearchFailure(PolicySchedulerError):
+    """A player-safe sampled search failed; no production fallback was attempted."""
+
+    def __init__(self, game_id: str, decision_id: int, cause: BaseException) -> None:
+        self.game_id = game_id
+        self.decision_id = decision_id
+        self.cause = cause
+        super().__init__(f"search failed for {game_id!r} decision {decision_id}: {cause}")
+
+
 class EvaluatorFailure(PolicySchedulerError):
     """One evaluator key could not score its routed sampled candidate positions."""
 
@@ -111,6 +144,20 @@ class LearnedPolicyAssignment:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchPolicyAssignment:
+    """One route's complete sampled-search identity and frozen descriptor."""
+
+    policy_id: str
+    descriptor: SearchDescriptor
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.policy_id, str) or not self.policy_id:
+            raise ValueError("search policy ID cannot be empty")
+        if self.descriptor.sampler_seed_derivation != DEFAULT_SAMPLER_SEED_DERIVATION:
+            raise ValueError("search policy uses an unsupported sampler seed derivation")
+
+
+@dataclass(frozen=True, slots=True)
 class PolicyDecisionAudit:
     """One submission plus auditable learned/fallback provenance."""
 
@@ -119,6 +166,7 @@ class PolicyDecisionAudit:
     selection: PolicySelection | None
     handling: str
     failure: PolicySchedulerError | None = None
+    search_selection: MinimaxSelection | None = None
 
     def __post_init__(self) -> None:
         if self.selection is not None:
@@ -126,17 +174,35 @@ class PolicyDecisionAudit:
                 raise ValueError("selection and submission game IDs differ")
             if self.selection.action != self.submission.action:
                 raise ValueError("selection and submission actions differ")
+        if (
+            self.search_selection is not None
+            and self.search_selection.action != self.submission.action
+        ):
+            raise ValueError("search selection and submission actions differ")
         if self.handling not in {
             "learned",
             "heuristic",
             "baseline",
             "sampler-fallback",
             "evaluator-fallback",
+            "search",
+            "learned-search-fallback",
         }:
             raise ValueError("unknown policy decision handling")
+        if self.handling in {"search", "learned-search-fallback"}:
+            if (
+                self.search_selection is None
+                or self.selection is not None
+                or self.failure is not None
+            ):
+                raise ValueError("search audit requires a search selection and no failure")
+        elif self.search_selection is not None:
+            raise ValueError("non-search audit cannot claim a search selection")
         if self.handling == "learned" and (self.selection is None or self.failure is not None):
             raise ValueError("learned audit requires a selection and no failure")
-        if self.handling != "learned" and self.selection is not None:
+        if self.handling not in {"learned", "search", "learned-search-fallback"} and (
+            self.selection is not None
+        ):
             raise ValueError("fallback audit cannot claim a learned selection")
 
 
@@ -147,6 +213,7 @@ class PolicySchedule:
     submissions: tuple[Submission, ...]
     selections: tuple[PolicySelection, ...]
     audits: tuple[PolicyDecisionAudit, ...]
+    search_selections: tuple[MinimaxSelection, ...] = ()
 
     def __post_init__(self) -> None:
         if tuple(audit.submission for audit in self.audits) != self.submissions:
@@ -156,12 +223,18 @@ class PolicySchedule:
         )
         if learned_selections != self.selections:
             raise ValueError("schedule selections must exactly match learned audits")
+        search_selections = tuple(
+            audit.search_selection for audit in self.audits if audit.search_selection is not None
+        )
+        if search_selections != self.search_selections:
+            raise ValueError("schedule search selections must exactly match search audits")
         keys = tuple((item.game_id, item.action.decision_id) for item in self.submissions)
         if len(set(keys)) != len(keys):
             raise ValueError("schedule cannot submit one decision more than once")
 
 
 SamplerFactory = Callable[[bytes], InformationSetSampler]
+SearchSamplerFactory = Callable[[bytes], SearchInformationSetSampler]
 
 
 @dataclass(slots=True)
@@ -172,16 +245,17 @@ class _LearnedPending:
 
 
 PolicyAssignmentKey = str | tuple[str, PlayerId]
+SearchAssignmentKey = PolicyAssignmentKey
 FallbackAgentKey = tuple[str, PlayerId]
 
 
 class PolicyScheduler:
-    """Flatten safe afterstates across pending games and route values back exactly.
+    """Route learned paid actions, strict sampled search, and baseline agents.
 
-    Setup and nested effect decisions bypass this learned path and are answered
-    by the configured player-safe heuristic.  A safe-sampler error either raises
-    :class:`SamplerFailure` in strict mode or records a heuristic fallback; it
-    never evaluates any candidate from the real authoritative state.
+    Schema-v1 learned policies retain their historical setup/effect heuristic
+    behavior. Schema-v2 learned continuations and explicit search assignments
+    use strict player-safe sampled minimax; search failure never falls back to
+    authoritative-state expansion or a simple agent.
     """
 
     def __init__(
@@ -191,13 +265,17 @@ class PolicyScheduler:
         *,
         run_seed: int | str | bytes,
         generation: int,
+        search_assignments: Mapping[SearchAssignmentKey, SearchPolicyAssignment] | None = None,
+        search_descriptors: Mapping[str, SearchDescriptor] | None = None,
         sampler_failure_mode: SamplerFailureMode = SamplerFailureMode.STRICT,
         heuristic: Agent | None = None,
         fallback_agents: Mapping[FallbackAgentKey, Agent] | None = None,
         registry: CardRegistry | None = None,
         sampler_factory: SamplerFactory | None = None,
+        search_sampler_factory: SearchSamplerFactory | None = None,
     ) -> None:
         self._assignments = dict(assignments)
+        self._search_assignments = dict(search_assignments or {})
         self._evaluators = dict(evaluators)
         self._failure_mode = SamplerFailureMode(sampler_failure_mode)
         self._registry = registry or load_card_registry()
@@ -205,8 +283,20 @@ class PolicyScheduler:
         self._fallback_agents = dict(fallback_agents or {})
         self._spec_builder = InformationSetSpecBuilder(self._registry)
         self._expander = TrustedCandidateExpander(self._registry)
+        self._search_spec_builder = SearchInformationSetSpecBuilder(self._registry)
         self._rng_factory = PolicyRngFactory(run_seed, generation)
+        self._search_rng_factory = SearchRngFactory(run_seed, generation)
         self._sampler_factory = sampler_factory or self._default_sampler
+        self._search_sampler_factory = search_sampler_factory or self._default_search_sampler
+        descriptors = {PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR}
+        descriptors.update(search_descriptors or {})
+        for descriptor_id, descriptor in descriptors.items():
+            if descriptor_id != descriptor.descriptor_id:
+                raise ValueError("search descriptor mapping key differs from descriptor identity")
+            if descriptor.sampler_seed_derivation != DEFAULT_SAMPLER_SEED_DERIVATION:
+                raise ValueError("search descriptor uses an unsupported sampler seed derivation")
+        self._search_descriptors = descriptors
+        self._searchers: dict[str, DeterministicSampledMinimax] = {}
         self._recent_paid_actions: dict[tuple[str, PlayerId, str], deque[SemanticAction]] = {}
         self._recorded_learned_decisions: set[tuple[str, int]] = set()
 
@@ -214,6 +304,9 @@ class PolicyScheduler:
         # Strict sampler errors are caught below so scheduler policy, rather than
         # sampler implementation details, controls fallback versus loud failure.
         return InformationSetSampler(self._registry, seed=seed, strict=True)
+
+    def _default_search_sampler(self, seed: bytes) -> SearchInformationSetSampler:
+        return SearchInformationSetSampler(self._registry, seed=seed, strict=True)
 
     def schedule(self, runner: PullGameRunner[GameState]) -> PolicySchedule:
         """Build submissions for one immutable ``runner.pending()`` snapshot.
@@ -225,30 +318,42 @@ class PolicyScheduler:
         """
 
         pending = runner.pending()
-        fallback_audits: dict[tuple[str, int], PolicyDecisionAudit] = {}
+        routed_audits: dict[tuple[str, int], PolicyDecisionAudit] = {}
         learned: list[_LearnedPending] = []
         for request in pending:
             decision = request.decision
-            if decision.kind is not DecisionKind.TURN_ACTION:
-                fallback_audits[(request.game_id, decision.decision_id)] = self._fallback_audit(
-                    request,
-                    "heuristic"
-                    if self._assignment_for(request.game_id, decision.chooser) is not None
-                    else "baseline",
-                )
+            key = (request.game_id, decision.decision_id)
+            explicit_search = self._search_assignment_for(request.game_id, decision.chooser)
+            if explicit_search is not None:
+                routed_audits[key] = self._search_audit(runner, request, explicit_search, "search")
                 continue
+
             assignment = self._assignment_for(request.game_id, decision.chooser)
             if assignment is None:
-                fallback_audits[(request.game_id, decision.decision_id)] = self._fallback_audit(
-                    request, "baseline"
-                )
+                routed_audits[key] = self._fallback_audit(request, "baseline")
+                continue
+            if decision.kind is not DecisionKind.TURN_ACTION:
+                if assignment.descriptor.schema_version == LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+                    # Historical schema-v1 behavior is deliberately frozen: only
+                    # paid actions are learned and every continuation uses the
+                    # original simple heuristic, not a seat baseline override.
+                    routed_audits[key] = self._fallback_audit(
+                        request, "heuristic", force_heuristic=True
+                    )
+                else:
+                    search_assignment = self._learned_search_assignment(request, assignment)
+                    routed_audits[key] = self._search_audit(
+                        runner,
+                        request,
+                        search_assignment,
+                        "learned-search-fallback",
+                    )
                 continue
             try:
                 learned.append(self._expand_pending(runner, request, assignment))
             except (InformationSetError, CandidateExpansionError) as error:
                 failure = SamplerFailure(request.game_id, decision.decision_id, error)
-                key = (request.game_id, decision.decision_id)
-                fallback_audits[key] = self._sampler_failure_audit(request, failure)
+                routed_audits[key] = self._sampler_failure_audit(request, failure)
             except PolicySchedulerError:
                 raise
 
@@ -303,13 +408,14 @@ class PolicyScheduler:
 
         audits = tuple(
             learned_audits.get((request.game_id, request.decision.decision_id))
-            or fallback_audits[(request.game_id, request.decision.decision_id)]
+            or routed_audits[(request.game_id, request.decision.decision_id)]
             for request in pending
         )
         return PolicySchedule(
             tuple(audit.submission for audit in audits),
             tuple(audit.selection for audit in audits if audit.selection is not None),
             audits,
+            tuple(audit.search_selection for audit in audits if audit.search_selection is not None),
         )
 
     def submit(self, runner: PullGameRunner[GameState]) -> PolicySchedule:
@@ -360,6 +466,102 @@ class PolicyScheduler:
         if seat_assignment is not None:
             return seat_assignment
         return self._assignments.get(game_id)
+
+    def _search_assignment_for(
+        self, game_id: str, chooser: PlayerId
+    ) -> SearchPolicyAssignment | None:
+        seat_assignment = self._search_assignments.get((game_id, chooser))
+        if seat_assignment is not None:
+            return seat_assignment
+        return self._search_assignments.get(game_id)
+
+    def _learned_search_assignment(
+        self,
+        request: PendingGameDecision,
+        assignment: LearnedPolicyAssignment,
+    ) -> SearchPolicyAssignment:
+        descriptor = assignment.descriptor
+        if descriptor.schema_version != POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            raise PolicySchedulerError("only schema-v2 learned policies have search fallback")
+        descriptor_id = descriptor.search_descriptor_id
+        assert descriptor_id is not None  # PolicyDescriptor validates schema-v2 fields.
+        try:
+            search_descriptor = self._search_descriptors[descriptor_id]
+        except KeyError as error:
+            raise SearchFailure(
+                request.game_id,
+                request.decision.decision_id,
+                ValueError(f"required search descriptor {descriptor_id!r} is unavailable"),
+            ) from error
+        return SearchPolicyAssignment(descriptor.policy_id, search_descriptor)
+
+    def _search_audit(
+        self,
+        runner: PullGameRunner[GameState],
+        request: PendingGameDecision,
+        assignment: SearchPolicyAssignment,
+        handling: str,
+    ) -> PolicyDecisionAudit:
+        """Build and sample a player-safe root, then run strict sampled minimax."""
+
+        decision = request.decision
+        try:
+            state = runner.state(request.game_id)
+            # This is the sole search bridge that receives authoritative state,
+            # and the exact pulled Decision is mandatory at that boundary.
+            spec = self._search_spec_builder.build(state, decision)
+            if (
+                spec.target_decision_id != decision.decision_id
+                or spec.chooser is not decision.chooser
+                or spec.legal_actions != decision.legal_actions
+            ):
+                raise SearchInvariantError(
+                    "runner state no longer matches its pending search decision"
+                )
+            sampler_seed = self._search_rng_factory.seed_for_decision(
+                game_id=request.game_id,
+                chooser=decision.chooser,
+                decision_id=decision.decision_id,
+                policy_id=assignment.policy_id,
+                search_descriptor_id=assignment.descriptor.descriptor_id,
+            )
+            sampler = self._search_sampler_factory(sampler_seed)
+            sampled = sampler.sample_many(spec, assignment.descriptor.determinization_count)
+            if len(sampled) != assignment.descriptor.determinization_count:
+                raise SearchInformationSetError("sampler returned an incorrect sample count")
+            if any(sample is None for sample in sampled):
+                raise SearchInformationSetError("non-strict sampler returned no safe sampled state")
+            samples = tuple(sample for sample in sampled if sample is not None)
+            searcher = self._searchers.get(assignment.descriptor.descriptor_id)
+            if searcher is None:
+                searcher = DeterministicSampledMinimax(
+                    assignment.descriptor, registry=self._registry
+                )
+                self._searchers[assignment.descriptor.descriptor_id] = searcher
+            selection = searcher.select(spec, samples)
+            if selection.action not in decision.legal_actions:
+                raise SearchInvariantError("sampled minimax selected an illegal root action")
+            selection = replace(
+                selection,
+                telemetry=replace(
+                    selection.telemetry,
+                    selector_seed_digest=seed_digest(sampler_seed),
+                ),
+            )
+        except SearchFailure:
+            raise
+        except Exception as error:
+            # Search is production-strict.  In particular, do not invoke either
+            # SimpleHeuristicAgent or a true-state action scorer after failure.
+            raise SearchFailure(request.game_id, decision.decision_id, error) from error
+        return PolicyDecisionAudit(
+            Submission(request.game_id, selection.action),
+            decision.chooser,
+            None,
+            handling,
+            None,
+            selection,
+        )
 
     def _expand_pending(
         self,
@@ -496,4 +698,8 @@ __all__ = [
     "PolicySchedulerError",
     "SamplerFailure",
     "SamplerFailureMode",
+    "SearchAssignmentKey",
+    "SearchFailure",
+    "SearchPolicyAssignment",
+    "SearchSamplerFactory",
 ]
