@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -7,9 +8,14 @@ import pytest
 import torch
 
 from innovation_ai.innovation.state import LEGACY_INFORMATION_POLICY_VERSION
+from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR
 from innovation_ai.training.checkpoint import (
+    DEFAULT_FALLBACK_AGENT,
+    DEFAULT_LEARNED_TURN_ACTION_POLICY,
+    DEFAULT_SEARCH_CONTINUATION_POLICY,
     CheckpointCompatibilityError,
     CheckpointIntegrityError,
+    PolicyCompatibilityError,
     PolicyDescriptor,
     assert_policy_compatible,
     load_checkpoint,
@@ -101,6 +107,8 @@ def test_legacy_checkpoint_loads_implicitly_but_rejects_an_explicit_public_encod
 
     loaded = load_checkpoint(directory)
     assert loaded.manifest.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
+    with pytest.raises(PolicyCompatibilityError, match="public-covered-v1"):
+        PolicyDescriptor.from_checkpoint(loaded.manifest)
     with pytest.raises(CheckpointCompatibilityError, match="encoder_layout_fingerprint"):
         load_checkpoint(directory, encoder_manifest=build_encoder_manifest())
 
@@ -127,3 +135,76 @@ def test_policy_descriptor_identity_is_content_derived_and_checkpoint_compatible
             replace(cold, encoder_layout_fingerprint="sha256:" + "f" * 64),
             manifest,
         )
+
+
+def test_real_pilot_001_schema_v1_policy_preserves_payload_and_identity() -> None:
+    path = (
+        Path(__file__).parents[2]
+        / "artifacts/runs/pilot-001/policies"
+        / "sha256:0c3f5e8e263c7aae5011deda9fcd269eff06090ec3bce9116022db82a5491d00.json"
+    )
+    original = path.read_text(encoding="utf-8").strip()
+    descriptor = load_policy_descriptor(path)
+
+    assert descriptor.schema_version == 1
+    assert descriptor.policy_id == (
+        "sha256:0c3f5e8e263c7aae5011deda9fcd269eff06090ec3bce9116022db82a5491d00"
+    )
+    assert descriptor.search_descriptor_id is None
+    assert descriptor.learned_turn_action_policy is None
+    assert descriptor.search_continuation_policy is None
+    assert descriptor.fallback_agent == "simple-heuristic"
+    assert descriptor.dumps() == original
+    assert "search_descriptor_id" not in descriptor.payload()
+
+
+def test_schema_v2_policy_round_trip_search_identity_and_tampering(tmp_path: Path) -> None:
+    encoder = build_encoder_manifest()
+    directory = save_checkpoint(tmp_path / "checkpoints", _model(encoder.input_dimension), encoder)
+    manifest = load_checkpoint(directory).manifest
+    descriptor = PolicyDescriptor.from_checkpoint(manifest, temperature=0.15)
+    path = tmp_path / "policy-v2.json"
+    descriptor.save(path)
+
+    assert descriptor.schema_version == 2
+    assert descriptor.search_descriptor_id == PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+    assert descriptor.learned_turn_action_policy == DEFAULT_LEARNED_TURN_ACTION_POLICY
+    assert descriptor.search_continuation_policy == DEFAULT_SEARCH_CONTINUATION_POLICY
+    assert descriptor.fallback_agent == DEFAULT_FALLBACK_AGENT
+    assert load_policy_descriptor(path) == descriptor
+    assert_policy_compatible(descriptor, manifest)
+
+    alternate_search_id = "sha256:" + "a" * 64
+    alternate = PolicyDescriptor.from_checkpoint(
+        manifest,
+        temperature=0.15,
+        search_descriptor_id=alternate_search_id,
+    )
+    assert alternate.search_descriptor_id == alternate_search_id
+    assert alternate.policy_id != descriptor.policy_id
+
+    tampered = descriptor.payload()
+    tampered["search_descriptor_id"] = alternate_search_id
+    with pytest.raises(PolicyCompatibilityError, match="content-derived ID"):
+        PolicyDescriptor.from_payload(tampered)
+
+    malformed = descriptor.payload()
+    malformed["search_descriptor_id"] = "sha256:not-a-digest"
+    with pytest.raises(PolicyCompatibilityError, match="tagged sha256"):
+        PolicyDescriptor.from_payload(malformed)
+
+    missing = descriptor.payload()
+    del missing["search_descriptor_id"]
+    with pytest.raises(PolicyCompatibilityError, match="fields differ from schema"):
+        PolicyDescriptor.from_payload(missing)
+
+    v1_with_v2_field = json.loads(
+        (
+            Path(__file__).parents[2]
+            / "artifacts/runs/pilot-001/policies"
+            / "sha256:0c3f5e8e263c7aae5011deda9fcd269eff06090ec3bce9116022db82a5491d00.json"
+        ).read_text(encoding="utf-8")
+    )
+    v1_with_v2_field["search_descriptor_id"] = PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+    with pytest.raises(PolicyCompatibilityError, match="fields differ from schema"):
+        PolicyDescriptor.from_payload(v1_with_v2_field)

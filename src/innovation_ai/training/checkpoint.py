@@ -23,10 +23,12 @@ from innovation_ai.innovation.logs import ENGINE_VERSION
 from innovation_ai.innovation.observations import OBSERVATION_SCHEMA_VERSION
 from innovation_ai.innovation.state import (
     INFORMATION_POLICY_VERSION,
+    PUBLIC_COVERED_INFORMATION_POLICY_VERSION,
     RULES_VERSION,
     STATE_SCHEMA_VERSION,
     TERMINAL_SCHEMA_VERSION,
 )
+from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR
 from innovation_ai.training.encoding import EncoderManifest, build_encoder_manifest
 from innovation_ai.training.model import (
     VALUE_NETWORK_ARCHITECTURE,
@@ -38,13 +40,17 @@ if TYPE_CHECKING:
     from innovation_ai.training.inference import CpuBatchValueEvaluator
 
 CHECKPOINT_MANIFEST_SCHEMA_VERSION = 1
-POLICY_DESCRIPTOR_SCHEMA_VERSION = 1
+LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION = 1
+POLICY_DESCRIPTOR_SCHEMA_VERSION = 2
 
 DEFAULT_AFTERSTATE_BOUNDARY_SEMANTICS_VERSION = "immediate-one-transition-v1"
 DEFAULT_INFORMATION_SET_SAMPLER_VERSION = "information-set-sampler-v1"
 DEFAULT_SAMPLER_RNG_VERSION = "sha256-counter-v1"
-DEFAULT_FALLBACK_AGENT = "simple-heuristic"
+LEGACY_DEFAULT_FALLBACK_AGENT = "simple-heuristic"
+DEFAULT_FALLBACK_AGENT = "sampled-minimax-heuristic"
 DEFAULT_FALLBACK_AGENT_VERSION = "v1"
+DEFAULT_LEARNED_TURN_ACTION_POLICY = "sampled-afterstate-value-v1"
+DEFAULT_SEARCH_CONTINUATION_POLICY = "hand-engineered-minimax-both-players-v1"
 DEFAULT_SELECTOR_VERSION = "temperature-softmax-v1"
 DEFAULT_SELECTOR_RNG_VERSION = "sha256-domain-separated-v1"
 
@@ -369,11 +375,17 @@ class PolicyDescriptor:
     temperature: float = 0.0
     selector_version: str = DEFAULT_SELECTOR_VERSION
     selector_rng_version: str = DEFAULT_SELECTOR_RNG_VERSION
+    search_descriptor_id: str | None = PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+    learned_turn_action_policy: str | None = DEFAULT_LEARNED_TURN_ACTION_POLICY
+    search_continuation_policy: str | None = DEFAULT_SEARCH_CONTINUATION_POLICY
     schema_version: int = POLICY_DESCRIPTOR_SCHEMA_VERSION
     policy_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.schema_version != POLICY_DESCRIPTOR_SCHEMA_VERSION:
+        if self.schema_version not in {
+            LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+            POLICY_DESCRIPTOR_SCHEMA_VERSION,
+        }:
             raise PolicyCompatibilityError(
                 f"unsupported policy descriptor schema {self.schema_version}"
             )
@@ -402,6 +414,52 @@ class PolicyDescriptor:
             "selector_rng_version",
         ):
             _require_string(getattr(self, name), f"policy descriptor {name}")
+
+        if self.schema_version == LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            if any(
+                value is not None
+                for value in (
+                    self.search_descriptor_id,
+                    self.learned_turn_action_policy,
+                    self.search_continuation_policy,
+                )
+            ):
+                raise PolicyCompatibilityError(
+                    "schema-v1 policy descriptors cannot contain schema-v2 fields"
+                )
+            if (
+                self.fallback_agent != LEGACY_DEFAULT_FALLBACK_AGENT
+                or self.fallback_agent_version != DEFAULT_FALLBACK_AGENT_VERSION
+            ):
+                raise PolicyCompatibilityError(
+                    "schema-v1 policy descriptor fallback differs from legacy contract"
+                )
+        else:
+            search_descriptor_id = _require_string(
+                self.search_descriptor_id, "policy descriptor search_descriptor_id"
+            )
+            digest = search_descriptor_id.removeprefix("sha256:")
+            if (
+                not search_descriptor_id.startswith("sha256:")
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise PolicyCompatibilityError(
+                    "policy descriptor search_descriptor_id must be a tagged sha256 digest"
+                )
+            _require_string(
+                self.learned_turn_action_policy,
+                "policy descriptor learned_turn_action_policy",
+            )
+            _require_string(
+                self.search_continuation_policy,
+                "policy descriptor search_continuation_policy",
+            )
+            if self.information_policy_version != PUBLIC_COVERED_INFORMATION_POLICY_VERSION:
+                raise PolicyCompatibilityError(
+                    "schema-v2 policy descriptor requires public-covered-v1 information"
+                )
+
         object.__setattr__(
             self,
             "policy_id",
@@ -409,6 +467,32 @@ class PolicyDescriptor:
         )
 
     def _identity_payload(self) -> dict[str, object]:
+        if self.schema_version == LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            names = (
+                "checkpoint_id",
+                "encoder_layout_fingerprint",
+                "card_data_fingerprint",
+                "effects_fingerprint",
+                "engine_version",
+                "rules_version",
+                "information_policy_version",
+                "action_schema_version",
+                "decision_schema_version",
+                "observation_schema_version",
+                "value_position_schema_version",
+                "public_boundary_schema_version",
+                "afterstate_boundary_semantics_version",
+                "information_set_sampler_version",
+                "sampler_rng_version",
+                "determinization_count",
+                "fallback_agent",
+                "fallback_agent_version",
+                "temperature",
+                "selector_version",
+                "selector_rng_version",
+                "schema_version",
+            )
+            return {name: getattr(self, name) for name in names}
         return cast(
             dict[str, object],
             {
@@ -437,11 +521,12 @@ class PolicyDescriptor:
 
     @classmethod
     def from_payload(cls, payload: object) -> PolicyDescriptor:
-        """Decode an exact descriptor and verify its content-derived ID."""
+        """Decode an exact schema-v1 or schema-v2 descriptor and verify its identity."""
 
         if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
             raise PolicyCompatibilityError("policy descriptor must be a JSON object")
-        expected = {
+        schema_version = _require_int(payload.get("schema_version"), "schema_version", minimum=1)
+        common_fields = {
             "checkpoint_id",
             "encoder_layout_fingerprint",
             "card_data_fingerprint",
@@ -466,10 +551,32 @@ class PolicyDescriptor:
             "schema_version",
             "policy_id",
         }
-        # The public wire name is intentionally plural to match arena manifests.
-        actual = set(payload)
-        if actual != expected:
+        if schema_version == LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            expected = common_fields
+        elif schema_version == POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            expected = common_fields | {
+                "search_descriptor_id",
+                "learned_turn_action_policy",
+                "search_continuation_policy",
+            }
+        else:
+            raise PolicyCompatibilityError(f"unsupported policy descriptor schema {schema_version}")
+        if set(payload) != expected:
             raise PolicyCompatibilityError("policy descriptor fields differ from schema")
+        if schema_version == LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            search_descriptor_id = None
+            learned_turn_action_policy = None
+            search_continuation_policy = None
+        else:
+            search_descriptor_id = _require_string(
+                payload["search_descriptor_id"], "search_descriptor_id"
+            )
+            learned_turn_action_policy = _require_string(
+                payload["learned_turn_action_policy"], "learned_turn_action_policy"
+            )
+            search_continuation_policy = _require_string(
+                payload["search_continuation_policy"], "search_continuation_policy"
+            )
         raw_temperature = payload["temperature"]
         if isinstance(raw_temperature, bool) or not isinstance(raw_temperature, (int, float)):
             raise PolicyCompatibilityError("policy temperature must be numeric")
@@ -526,7 +633,10 @@ class PolicyDescriptor:
             selector_rng_version=_require_string(
                 payload["selector_rng_version"], "selector_rng_version"
             ),
-            schema_version=_require_int(payload["schema_version"], "schema_version", minimum=1),
+            search_descriptor_id=search_descriptor_id,
+            learned_turn_action_policy=learned_turn_action_policy,
+            search_continuation_policy=search_continuation_policy,
+            schema_version=schema_version,
         )
         if _require_string(payload["policy_id"], "policy_id") != descriptor.policy_id:
             raise PolicyCompatibilityError("policy descriptor content-derived ID is invalid")
@@ -546,8 +656,9 @@ class PolicyDescriptor:
         temperature: float = 0.0,
         selector_version: str = DEFAULT_SELECTOR_VERSION,
         selector_rng_version: str = DEFAULT_SELECTOR_RNG_VERSION,
+        search_descriptor_id: str = PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id,
     ) -> PolicyDescriptor:
-        """Build a descriptor with compatibility fields copied from a checkpoint."""
+        """Build a schema-v2 descriptor with fields copied from a compatible checkpoint."""
 
         return cls(
             checkpoint_id=manifest.checkpoint_id,
@@ -571,6 +682,9 @@ class PolicyDescriptor:
             temperature=temperature,
             selector_version=selector_version,
             selector_rng_version=selector_rng_version,
+            search_descriptor_id=search_descriptor_id,
+            learned_turn_action_policy=DEFAULT_LEARNED_TURN_ACTION_POLICY,
+            search_continuation_policy=DEFAULT_SEARCH_CONTINUATION_POLICY,
         )
 
 
