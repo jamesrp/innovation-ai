@@ -8,6 +8,8 @@ from enum import StrEnum
 from innovation_ai.innovation.board import covered_visible_slots
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.state import (
+    LEGACY_INFORMATION_POLICY_VERSION,
+    PUBLIC_COVERED_INFORMATION_POLICY_VERSION,
     PUBLIC_REVEALED_COLOR_PREFIX,
     GamePhase,
     GameState,
@@ -28,8 +30,8 @@ OBSERVATION_SCHEMA_VERSION = 3
 class InformationPolicy(StrEnum):
     """Supported policies for opponent covered-board information."""
 
-    RULEBOOK_PRIVATE_COVERED = "rulebook-private-covered-v1"
-    PUBLIC_COVERED = "public-covered-v1"
+    RULEBOOK_PRIVATE_COVERED = LEGACY_INFORMATION_POLICY_VERSION
+    PUBLIC_COVERED = PUBLIC_COVERED_INFORMATION_POLICY_VERSION
 
 
 @dataclass(frozen=True, slots=True)

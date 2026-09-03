@@ -33,6 +33,7 @@ from innovation_ai.innovation.state import (
     RULES_VERSION,
     SETUP_RNG_VERSION,
     STATE_SCHEMA_VERSION,
+    SUPPORTED_INFORMATION_POLICY_VERSIONS,
     TERMINAL_SCHEMA_VERSION,
     GamePhase,
     GameState,
@@ -82,11 +83,19 @@ class ReplayAdapter(Protocol):
 class DefaultReplayAdapter:
     """Replay adapter for the setup, paid-action, and mid-dogma protocol."""
 
+    def __init__(self, information_policy_version: str = INFORMATION_POLICY_VERSION) -> None:
+        if information_policy_version not in SUPPORTED_INFORMATION_POLICY_VERSIONS:
+            raise ReplayCompatibilityError(
+                f"unsupported information policy {information_policy_version!r}"
+            )
+        self.information_policy_version = information_policy_version
+
     def initial_state(self, setup: SetupProvenance, registry: CardRegistry) -> GameState:
         state = build_setup_state_from_piles(
             setup.shuffled_piles,
             seed=setup.seed,
             registry=registry,
+            information_policy_version=self.information_policy_version,
         )
         if state.setup != setup:
             raise ReplayCompatibilityError(
@@ -125,11 +134,6 @@ def check_game_log_compatibility(log: GameLog, registry: CardRegistry | None = N
         ("game-log schema", log.schema_version, GAME_LOG_SCHEMA_VERSION),
         ("engine", log.engine_version, ENGINE_VERSION),
         ("rules", log.rules_version, RULES_VERSION),
-        (
-            "information policy",
-            log.information_policy_version,
-            INFORMATION_POLICY_VERSION,
-        ),
         ("state schema", log.state_schema_version, STATE_SCHEMA_VERSION),
         ("action schema", log.action_schema_version, ACTION_SCHEMA_VERSION),
         ("decision schema", log.decision_schema_version, DECISION_SCHEMA_VERSION),
@@ -149,6 +153,12 @@ def check_game_log_compatibility(log: GameLog, registry: CardRegistry | None = N
             raise ReplayCompatibilityError(
                 f"incompatible {name}: log has {actual!r}, engine expects {expected!r}"
             )
+    if log.information_policy_version not in SUPPORTED_INFORMATION_POLICY_VERSIONS:
+        raise ReplayCompatibilityError(
+            "incompatible information policy: "
+            f"log has {log.information_policy_version!r}, "
+            f"engine supports {sorted(SUPPORTED_INFORMATION_POLICY_VERSIONS)!r}"
+        )
 
 
 def _decision_for_action(
@@ -173,8 +183,8 @@ def replay_game_log(
     """Replay every action and verify decisions, hashes, terminal data, and final markers."""
 
     registry = registry or load_card_registry()
-    selected_adapter = adapter or DefaultReplayAdapter()
     check_game_log_compatibility(log, registry)
+    selected_adapter = adapter or DefaultReplayAdapter(log.information_policy_version)
     state = selected_adapter.initial_state(log.setup, registry)
     try:
         assert_state_properties(state, registry)
@@ -239,7 +249,7 @@ class GameLogRecorder:
         adapter: ReplayAdapter | None = None,
     ) -> None:
         self._registry = registry or load_card_registry()
-        self._adapter = adapter or DefaultReplayAdapter()
+        self._adapter = adapter or DefaultReplayAdapter(initial_state.information_policy_version)
         if initial_state.setup.card_data_fingerprint != self._registry.data_fingerprint:
             raise ReplayRecordingError("initial state's card-data fingerprint is incompatible")
         reconstructed = self._adapter.initial_state(initial_state.setup, self._registry)

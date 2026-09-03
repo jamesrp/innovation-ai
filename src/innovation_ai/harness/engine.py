@@ -11,6 +11,7 @@ from innovation_ai.innovation.effects.program import EffectProgramRegistry
 from innovation_ai.innovation.effects.registry import load_effect_programs
 from innovation_ai.innovation.protocol import apply_action, current_decisions
 from innovation_ai.innovation.state import (
+    INFORMATION_POLICY_VERSION,
     GameState,
     TerminalResult,
     build_setup_state,
@@ -47,11 +48,16 @@ class InnovationEngineAdapter:
 
     registry: CardRegistry = field(default_factory=load_card_registry)
     programs: EffectProgramRegistry = field(default_factory=load_effect_programs)
+    information_policy_version: str = INFORMATION_POLICY_VERSION
 
     def initial_state(self, seed: int, /) -> GameState:
         """Build the seeded Innovation setup state."""
 
-        return build_setup_state(seed, self.registry)
+        return build_setup_state(
+            seed,
+            self.registry,
+            information_policy_version=self.information_policy_version,
+        )
 
     def pending_decisions(self, state: GameState, /) -> tuple[Decision, ...]:
         """Project the engine's current player decisions."""

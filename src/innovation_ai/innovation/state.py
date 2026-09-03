@@ -24,7 +24,12 @@ PUBLIC_REVEALED_COLOR_PREFIX = "public-revealed-color-"
 """Effect-variable name prefix used for transient public colour attributes."""
 
 RULES_VERSION = "innovation-base-third-edition-2p-v1"
-INFORMATION_POLICY_VERSION = "rulebook-private-covered-v1"
+LEGACY_INFORMATION_POLICY_VERSION = "rulebook-private-covered-v1"
+PUBLIC_COVERED_INFORMATION_POLICY_VERSION = "public-covered-v1"
+INFORMATION_POLICY_VERSION = PUBLIC_COVERED_INFORMATION_POLICY_VERSION
+SUPPORTED_INFORMATION_POLICY_VERSIONS = frozenset(
+    {LEGACY_INFORMATION_POLICY_VERSION, PUBLIC_COVERED_INFORMATION_POLICY_VERSION}
+)
 STATE_SCHEMA_VERSION = 2
 TERMINAL_SCHEMA_VERSION = 1
 SETUP_RNG_VERSION = "python-mt19937-shuffle-v1"
@@ -357,6 +362,10 @@ class GameState:
     information_policy_version: str = INFORMATION_POLICY_VERSION
 
     def __post_init__(self) -> None:
+        if self.information_policy_version not in SUPPORTED_INFORMATION_POLICY_VERSIONS:
+            raise ValueError(
+                f"unsupported information-policy version {self.information_policy_version!r}"
+            )
         if tuple(player.player_id for player in self.players) != tuple(PlayerId):
             raise ValueError("players must be in canonical player order")
         if self.turn_number < 0 or self.paid_actions_remaining < 0:
@@ -428,7 +437,12 @@ def _replace_game_state(state: GameState, **changes: object) -> GameState:
     return GameState(**values)
 
 
-def build_setup_state(seed: int, registry: CardRegistry | None = None) -> GameState:
+def build_setup_state(
+    seed: int,
+    registry: CardRegistry | None = None,
+    *,
+    information_policy_version: str = INFORMATION_POLICY_VERSION,
+) -> GameState:
     """Shuffle supplies, set aside achievements, and deal two cards per player."""
 
     registry = registry or load_card_registry()
@@ -438,7 +452,12 @@ def build_setup_state(seed: int, registry: CardRegistry | None = None) -> GameSt
         cards = sorted((card.id for card in registry.cards if card.age == age), key=str)
         rng.shuffle(cards)
         shuffled.append(tuple(cards))
-    return build_setup_state_from_piles(tuple(shuffled), seed=seed, registry=registry)
+    return build_setup_state_from_piles(
+        tuple(shuffled),
+        seed=seed,
+        registry=registry,
+        information_policy_version=information_policy_version,
+    )
 
 
 def build_setup_state_from_piles(
@@ -446,6 +465,7 @@ def build_setup_state_from_piles(
     *,
     seed: int,
     registry: CardRegistry | None = None,
+    information_policy_version: str = INFORMATION_POLICY_VERSION,
 ) -> GameState:
     """Build setup from an explicit top-to-bottom order for portable exact replay.
 
@@ -495,6 +515,7 @@ def build_setup_state_from_piles(
             shuffled_piles,
             deal_sequence,
         ),
+        information_policy_version=information_policy_version,
     )
     from innovation_ai.innovation.zones import assert_state_invariants
 
@@ -552,6 +573,7 @@ def build_explicit_state(
     next_decision_id: int = 10,
     next_event_id: int = 1,
     next_dogma_action_id: int = 1,
+    information_policy_version: str = INFORMATION_POLICY_VERSION,
 ) -> GameState:
     """Build an arbitrary validated mid-game position for focused rule and card tests.
 
@@ -668,6 +690,7 @@ def build_explicit_state(
             ),
             tuple(player_id for _ in range(2) for player_id in PlayerId),
         ),
+        information_policy_version=information_policy_version,
     )
     from innovation_ai.innovation.zones import assert_state_invariants
 

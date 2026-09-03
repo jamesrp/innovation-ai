@@ -13,7 +13,7 @@ from innovation_ai.harness.policy import (
     build_value_position,
 )
 from innovation_ai.innovation.actions import ChooseCardAction, Decision, DecisionKind
-from innovation_ai.innovation.observations import observe
+from innovation_ai.innovation.observations import InformationPolicy, observe
 from innovation_ai.innovation.protocol import current_decision
 from innovation_ai.innovation.state import (
     ExplicitPlayerPosition,
@@ -34,7 +34,11 @@ from innovation_ai.training.encoding import (
 )
 
 
-def _relative_state(*, swapped: bool = False) -> GameState:
+def _relative_state(
+    *,
+    swapped: bool = False,
+    information_policy: InformationPolicy = InformationPolicy.PUBLIC_COVERED,
+) -> GameState:
     self_id = PlayerId.PLAYER_2 if swapped else PlayerId.PLAYER_1
     opponent_id = PlayerId.PLAYER_1 if swapped else PlayerId.PLAYER_2
     return build_explicit_state(
@@ -58,6 +62,7 @@ def _relative_state(*, swapped: bool = False) -> GameState:
         active_player=self_id,
         turn_number=8,
         paid_actions_remaining=2,
+        information_policy_version=information_policy.value,
     )
 
 
@@ -69,11 +74,17 @@ def _current_position(state: GameState) -> ValuePosition:
 
 def test_encoder_manifest_fixture_is_frozen_and_strict() -> None:
     generated = build_encoder_manifest()
-    fixture = load_encoder_manifest(Path("docs/encoder_v1_manifest.json"))
+    public_fixture = load_encoder_manifest(Path("docs/encoder_v1_public_covered_manifest.json"))
+    legacy = build_encoder_manifest(
+        information_policy_version=InformationPolicy.RULEBOOK_PRIVATE_COVERED.value
+    )
+    legacy_fixture = load_encoder_manifest(Path("docs/encoder_v1_manifest.json"))
 
-    assert generated == fixture
-    assert generated.input_dimension == 4690
-    assert generated.layout_fingerprint == (
+    assert generated == public_fixture
+    assert legacy == legacy_fixture
+    assert generated.input_dimension == legacy.input_dimension == 4690
+    assert generated.layout_fingerprint != legacy.layout_fingerprint
+    assert legacy.layout_fingerprint == (
         "sha256:b472a8911f444bcf7920ff89fab2ff55aa23f054747242b538c32a7851c5b2b5"
     )
     with pytest.raises(ValueError, match="dimension"):
@@ -173,7 +184,9 @@ def test_public_monument_progress_and_current_afterstate_marker_encode_different
 
 
 def test_unknown_covered_count_differs_from_known_zero() -> None:
-    position = _current_position(_relative_state())
+    position = _current_position(
+        _relative_state(information_policy=InformationPolicy.RULEBOOK_PRIVATE_COVERED)
+    )
     observation = position.observation
     opponent = observation.player(PlayerId.PLAYER_2)
     blue = opponent.board[0]
@@ -185,7 +198,11 @@ def test_unknown_covered_count_differs_from_known_zero() -> None:
         players=(observation.player(PlayerId.PLAYER_1), known_opponent),
     )
     known_position = replace(position, observation=known_observation)
-    encoder = FlatObservationEncoder()
+    encoder = FlatObservationEncoder(
+        manifest=build_encoder_manifest(
+            information_policy_version=InformationPolicy.RULEBOOK_PRIVATE_COVERED.value
+        )
+    )
 
     unknown = encoder.encode(position)
     known = encoder.encode(known_position)

@@ -6,6 +6,8 @@ import pytest
 
 from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.state import (
+    LEGACY_INFORMATION_POLICY_VERSION,
+    PUBLIC_COVERED_INFORMATION_POLICY_VERSION,
     STATE_SCHEMA_VERSION,
     Board,
     ColorStack,
@@ -14,6 +16,7 @@ from innovation_ai.innovation.state import (
     GamePhase,
     PlayerState,
     SupplyState,
+    build_explicit_state,
     build_setup_state,
     build_setup_state_from_piles,
     clone_state,
@@ -44,6 +47,7 @@ def test_setup_constructs_complete_deterministic_authoritative_state() -> None:
     )
     assert state.setup.card_data_fingerprint == registry.data_fingerprint
     assert state.setup.rng_version == "python-mt19937-shuffle-v1"
+    assert state.information_policy_version == PUBLIC_COVERED_INFORMATION_POLICY_VERSION
     assert (
         build_setup_state_from_piles(
             state.setup.shuffled_piles,
@@ -57,6 +61,25 @@ def test_setup_constructs_complete_deterministic_authoritative_state() -> None:
     with pytest.raises(ValueError, match="ten shuffled piles"):
         build_setup_state_from_piles((), seed=1, registry=registry)
     assert_state_invariants(state, registry)
+
+
+def test_setup_and_explicit_state_can_retain_the_legacy_information_policy() -> None:
+    public = build_setup_state(123)
+    legacy = build_setup_state(123, information_policy_version=LEGACY_INFORMATION_POLICY_VERSION)
+
+    assert legacy.setup == public.setup
+    assert legacy.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
+    assert state_hash(legacy) != state_hash(public)
+    assert (
+        build_setup_state_from_piles(
+            legacy.setup.shuffled_piles,
+            seed=legacy.setup.seed,
+            information_policy_version=LEGACY_INFORMATION_POLICY_VERSION,
+        )
+        == legacy
+    )
+    explicit = build_explicit_state(information_policy_version=LEGACY_INFORMATION_POLICY_VERSION)
+    assert explicit.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
 
 
 def test_state_clone_payload_and_hash_are_deterministic_and_detached() -> None:

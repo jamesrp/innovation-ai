@@ -252,7 +252,13 @@ def test_hidden_hand_score_and_unsplayed_covered_identities_do_not_leak() -> Non
     rearranged, _ = rearrange_stack(
         covered, PlayerId.PLAYER_2, Color.BLUE, (second, first, top), registry
     )
-    assert_observation_leak_resistance(covered, rearranged, PlayerId.PLAYER_1, registry)
+    assert_observation_leak_resistance(
+        covered,
+        rearranged,
+        PlayerId.PLAYER_1,
+        registry,
+        policy=InformationPolicy.RULEBOOK_PRIVATE_COVERED,
+    )
     with pytest.raises(InvariantViolation, match="leaked"):
         assert_observation_leak_resistance(
             covered,

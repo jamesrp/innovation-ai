@@ -186,6 +186,15 @@ from innovation_ai.innovation.state import (
     state_hash,
     state_payload,
 )
+from innovation_ai.innovation.strategic import (
+    STRATEGIC_STATE_DIGEST_VERSION,
+    is_strategically_equal,
+    strategic_position_digest,
+    strategic_state_digest,
+    strategic_state_hash,
+    strategic_state_json,
+    strategic_state_payload,
+)
 from innovation_ai.innovation.terminal import (
     ACHIEVEMENT_VICTORY_COUNT,
     TerminalError,
@@ -254,6 +263,7 @@ __all__ = [
     "OBSERVATION_SCHEMA_VERSION",
     "SPECIAL_CHECK_ORDER",
     "STATE_SCHEMA_VERSION",
+    "STRATEGIC_STATE_DIGEST_VERSION",
     "TERMINAL_SCHEMA_VERSION",
     "AchieveAction",
     "AchievementCheckResult",
@@ -403,6 +413,7 @@ __all__ = [
     "highest_top_value",
     "immediately_beneath",
     "implemented_card_ids",
+    "is_strategically_equal",
     "linked_route",
     "linked_route_satisfied",
     "load_card_registry",
@@ -441,6 +452,11 @@ __all__ = [
     "state_hash",
     "state_payload",
     "step_effect",
+    "strategic_position_digest",
+    "strategic_state_digest",
+    "strategic_state_hash",
+    "strategic_state_json",
+    "strategic_state_payload",
     "submit_effect_action",
     "terminal_from_payload",
     "terminal_payload",

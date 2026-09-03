@@ -47,10 +47,10 @@ from innovation_ai.innovation.serialization import (
     terminal_payload,
 )
 from innovation_ai.innovation.state import (
-    INFORMATION_POLICY_VERSION,
     RULES_VERSION,
     SETUP_RNG_VERSION,
     STATE_SCHEMA_VERSION,
+    SUPPORTED_INFORMATION_POLICY_VERSIONS,
     TERMINAL_SCHEMA_VERSION,
     GameState,
     SetupProvenance,
@@ -480,7 +480,6 @@ def check_compact_episode_compatibility(
         ("compact replay schema", episode.schema_version, COMPACT_REPLAY_SCHEMA_VERSION),
         ("engine", episode.engine_version, ENGINE_VERSION),
         ("rules", episode.rules_version, RULES_VERSION),
-        ("information policy", episode.information_policy_version, INFORMATION_POLICY_VERSION),
         ("state schema", episode.state_schema_version, STATE_SCHEMA_VERSION),
         ("action schema", episode.action_schema_version, ACTION_SCHEMA_VERSION),
         ("decision schema", episode.decision_schema_version, DECISION_SCHEMA_VERSION),
@@ -500,6 +499,12 @@ def check_compact_episode_compatibility(
             raise CompactReplayCompatibilityError(
                 f"incompatible {name}: episode has {actual!r}, engine expects {required!r}"
             )
+    if episode.information_policy_version not in SUPPORTED_INFORMATION_POLICY_VERSIONS:
+        raise CompactReplayCompatibilityError(
+            "incompatible information policy: "
+            f"episode has {episode.information_policy_version!r}, "
+            f"engine supports {sorted(SUPPORTED_INFORMATION_POLICY_VERSIONS)!r}"
+        )
 
 
 def verify_compact_episode(
@@ -511,8 +516,8 @@ def verify_compact_episode(
     """Replay setup and actions, rejecting illegal, truncated, edited, or divergent episodes."""
 
     registry = registry or load_card_registry()
-    selected_adapter = adapter or DefaultReplayAdapter()
     check_compact_episode_compatibility(episode, registry)
+    selected_adapter = adapter or DefaultReplayAdapter(episode.information_policy_version)
     try:
         state = selected_adapter.initial_state(episode.setup, registry)
         assert_state_properties(state, registry)
@@ -567,7 +572,7 @@ class CompactReplayRecorder:
         adapter: ReplayAdapter | None = None,
     ) -> None:
         self._registry = registry or load_card_registry()
-        self._adapter = adapter or DefaultReplayAdapter()
+        self._adapter = adapter or DefaultReplayAdapter(initial_state.information_policy_version)
         if initial_state.setup.card_data_fingerprint != self._registry.data_fingerprint:
             raise CompactReplayRecordingError(
                 "initial state's card-data fingerprint is incompatible"

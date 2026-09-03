@@ -134,7 +134,7 @@ def test_sample_preserves_observation_legal_actions_splays_and_synthetic_provena
         for item in spec.hidden_allocation_constraints
         if item.kind is HiddenAllocationKind.OPPONENT_SPLAYED_COVERED
     )
-    assert len(hidden_splayed) == 2
+    assert hidden_splayed == ()
 
     sampled = InformationSetSampler(seed=211).sample(spec)
     assert sampled is not None
@@ -142,7 +142,10 @@ def test_sample_preserves_observation_legal_actions_splays_and_synthetic_provena
     assert sampled.setup.seed == SYNTHETIC_SETUP_SEED
     assert sampled.setup != state.setup
     assert observe(sampled, spec.chooser) == spec.observation
-    assert sampled.player(PlayerId.PLAYER_2).board.stack(Color.BLUE).splay is SplayDirection.UP
+    sampled_stack = sampled.player(PlayerId.PLAYER_2).board.stack(Color.BLUE)
+    original_stack = state.player(PlayerId.PLAYER_2).board.stack(Color.BLUE)
+    assert sampled_stack.cards == original_stack.cards
+    assert sampled_stack.splay is SplayDirection.UP
 
 
 def test_draw_afterstate_is_reobserved_for_original_chooser_after_turn_rotation() -> None:

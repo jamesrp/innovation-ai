@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from innovation_ai.innovation.actions import ChooseStartingMeldAction
-from innovation_ai.innovation.state import build_setup_state
+from innovation_ai.innovation.state import (
+    LEGACY_INFORMATION_POLICY_VERSION,
+    build_setup_state,
+)
 from innovation_ai.innovation.types import CardId, PlayerId
 from innovation_ai.training.compact_replay import (
     CompactEpisode,
@@ -103,6 +106,24 @@ def test_compact_episode_rejects_noncanonical_edits_truncation_illegal_and_incom
 
     with pytest.raises(CompactReplayCompatibilityError, match="incompatible engine"):
         verify_compact_episode(replace(episode, engine_version="999.0"))
+
+
+def test_legacy_compact_episode_reconstructs_its_recorded_information_policy() -> None:
+    recorder = CompactReplayRecorder(
+        build_setup_state(1005, information_policy_version=LEGACY_INFORMATION_POLICY_VERSION),
+        "legacy-episode",
+        _provenance(),
+    )
+    for _ in range(200):
+        decisions = recorder.decisions()
+        if not decisions:
+            break
+        recorder.submit(decisions[0].legal_actions[0])
+    episode = recorder.episode()
+
+    verified = verify_compact_episode(loads_compact_episode(dumps_compact_episode(episode)))
+    assert episode.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
+    assert verified.state.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
 
 
 def test_shard_is_preassigned_completion_order_independent_and_fixed_gzip(tmp_path: Path) -> None:

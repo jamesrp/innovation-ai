@@ -47,9 +47,9 @@ from innovation_ai.innovation.observations import (
     ZoneObservation,
 )
 from innovation_ai.innovation.state import (
-    INFORMATION_POLICY_VERSION,
     RULES_VERSION,
     STATE_SCHEMA_VERSION,
+    SUPPORTED_INFORMATION_POLICY_VERSIONS,
     TERMINAL_SCHEMA_VERSION,
     Board,
     ColorStack,
@@ -736,6 +736,16 @@ def state_from_payload(
         raise SerializationError("state.starting_meld_choices must contain exactly two values")
     terminal_value = payload["terminal_result"]
     active = _optional_string(payload["active_player"], "state.active_player")
+    information_policy_version = _string(
+        payload["information_policy_version"], "state.information_policy_version"
+    )
+    if (
+        check_compatibility
+        and information_policy_version not in SUPPORTED_INFORMATION_POLICY_VERSIONS
+    ):
+        raise SchemaVersionError(
+            f"unsupported information-policy version {information_policy_version!r}"
+        )
     state = GameState(
         supply=supply,
         players=players,
@@ -776,9 +786,7 @@ def state_from_payload(
         setup=_setup(payload["setup"], "state.setup"),
         terminal_result=None if terminal_value is None else terminal_from_payload(terminal_value),
         rules_version=_string(payload["rules_version"], "state.rules_version"),
-        information_policy_version=_string(
-            payload["information_policy_version"], "state.information_policy_version"
-        ),
+        information_policy_version=information_policy_version,
     )
     from innovation_ai.innovation.effects.model import validate_effect_runtime_structure
 
@@ -790,10 +798,6 @@ def state_from_payload(
         registry = registry or load_card_registry()
         if state.rules_version != RULES_VERSION:
             raise SchemaVersionError(f"unsupported rules version {state.rules_version!r}")
-        if state.information_policy_version != INFORMATION_POLICY_VERSION:
-            raise SchemaVersionError(
-                f"unsupported information-policy version {state.information_policy_version!r}"
-            )
         if state.setup.card_data_fingerprint != registry.data_fingerprint:
             raise SchemaVersionError("state card-data fingerprint is incompatible")
         try:

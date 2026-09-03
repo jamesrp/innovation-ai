@@ -48,7 +48,10 @@ from innovation_ai.training.compact_replay import (
     setup_provenance_digest,
     sha256_digest,
 )
-from innovation_ai.training.encoding import FlatObservationEncoder
+from innovation_ai.training.encoding import (
+    FlatObservationEncoder,
+    build_encoder_manifest,
+)
 
 DATASET_FORMAT = "innovation-ai-value-dataset"
 DATASET_SCHEMA_VERSION = 1
@@ -464,8 +467,8 @@ def extract_value_position_examples(
     """
 
     registry = registry or load_card_registry()
-    selected_adapter = adapter or DefaultReplayAdapter()
     check_compact_episode_compatibility(episode, registry)
+    selected_adapter = adapter or DefaultReplayAdapter(episode.information_policy_version)
     try:
         state = selected_adapter.initial_state(episode.setup, registry)
         assert_state_properties(state, registry)
@@ -586,12 +589,39 @@ def materialize_dataset(
     if episodes_per_shard < 1:
         raise ValueError("episodes per shard must be positive")
     registry = registry or load_card_registry()
-    encoder = encoder or FlatObservationEncoder(registry)
     source_records = _read_source_records(source_paths, registry)
     episodes = tuple(episode for record in source_records for episode in record.episodes)
     if len({episode.episode_id for episode in episodes}) != len(episodes):
         raise DatasetMaterializationError("compact source shards contain duplicate episode IDs")
     episodes = tuple(sorted(episodes, key=lambda item: item.episode_id))
+    episode_policies = tuple(sorted({episode.information_policy_version for episode in episodes}))
+    if len(episode_policies) != 1:
+        raise DatasetMaterializationError(
+            "compact replay source shards must use exactly one information policy; "
+            f"found {episode_policies!r}"
+        )
+    if encoder is None:
+        encoder = FlatObservationEncoder(
+            registry,
+            manifest=build_encoder_manifest(
+                registry, information_policy_version=episode_policies[0]
+            ),
+        )
+    mismatched_policies = tuple(
+        sorted(
+            {
+                episode.information_policy_version
+                for episode in episodes
+                if episode.information_policy_version != encoder.manifest.information_policy_version
+            }
+        )
+    )
+    if mismatched_policies:
+        raise DatasetMaterializationError(
+            "compact replay information policy does not match encoder manifest: "
+            f"episodes use {mismatched_policies!r}, "
+            f"encoder uses {encoder.manifest.information_policy_version!r}"
+        )
 
     examples_by_episode = {
         episode.episode_id: extract_value_position_examples(

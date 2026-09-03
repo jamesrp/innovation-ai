@@ -9,7 +9,10 @@ import numpy as np
 import pytest
 
 from innovation_ai.innovation.actions import DogmaAction
-from innovation_ai.innovation.state import build_setup_state
+from innovation_ai.innovation.state import (
+    LEGACY_INFORMATION_POLICY_VERSION,
+    build_setup_state,
+)
 from innovation_ai.innovation.types import PlayerId
 from innovation_ai.training.compact_replay import (
     CompactEpisode,
@@ -30,7 +33,7 @@ from innovation_ai.training.dataset import (
     load_dataset_shard,
     materialize_dataset,
 )
-from innovation_ai.training.encoding import FlatObservationEncoder
+from innovation_ai.training.encoding import FlatObservationEncoder, build_encoder_manifest
 
 
 def _provenance() -> CompactReplayProvenance:
@@ -47,8 +50,19 @@ def _provenance() -> CompactReplayProvenance:
     )
 
 
-def _episode(seed: int, episode_id: str, *, prefer_dogma: bool = False) -> CompactEpisode:
-    recorder = CompactReplayRecorder(build_setup_state(seed), episode_id, _provenance())
+def _episode(
+    seed: int,
+    episode_id: str,
+    *,
+    prefer_dogma: bool = False,
+    information_policy_version: str | None = None,
+) -> CompactEpisode:
+    state = (
+        build_setup_state(seed)
+        if information_policy_version is None
+        else build_setup_state(seed, information_policy_version=information_policy_version)
+    )
+    recorder = CompactReplayRecorder(state, episode_id, _provenance())
     for _ in range(400):
         decisions = recorder.decisions()
         if not decisions:
@@ -149,6 +163,30 @@ def test_materialization_groups_duplicate_setup_provenance_and_is_resumable_dete
     with pytest.raises(DatasetMaterializationError, match="differs"):
         materialize_dataset(
             [source], tmp_path / "dataset-one", validation_fraction=0.5, episodes_per_shard=1
+        )
+
+
+def test_legacy_source_auto_selects_its_encoder_manifest_and_explicit_mismatch_fails(
+    tmp_path: Path,
+) -> None:
+    legacy = _episode(
+        24,
+        "legacy",
+        information_policy_version=LEGACY_INFORMATION_POLICY_VERSION,
+    )
+    source = _source(tmp_path / "legacy.jsonl.gz", [legacy])
+
+    manifest = materialize_dataset([source], tmp_path / "legacy-dataset", validation_fraction=0.0)
+    legacy_encoder = build_encoder_manifest(
+        information_policy_version=LEGACY_INFORMATION_POLICY_VERSION
+    )
+    assert manifest.encoder_fingerprint == legacy_encoder.layout_fingerprint
+    with pytest.raises(DatasetMaterializationError, match="does not match encoder"):
+        materialize_dataset(
+            [source],
+            tmp_path / "mismatch-dataset",
+            encoder=FlatObservationEncoder(),
+            validation_fraction=0.0,
         )
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from innovation_ai.innovation.state import LEGACY_INFORMATION_POLICY_VERSION
 from innovation_ai.training.checkpoint import (
     CheckpointCompatibilityError,
     CheckpointIntegrityError,
@@ -88,6 +89,20 @@ def test_checkpoint_rejects_tampering_and_encoder_compatibility_mismatch(tmp_pat
     (directory / "model.pt").write_bytes(b"tampered")
     with pytest.raises(CheckpointIntegrityError, match="digest mismatch"):
         load_checkpoint(directory)
+
+
+def test_legacy_checkpoint_loads_implicitly_but_rejects_an_explicit_public_encoder(
+    tmp_path: Path,
+) -> None:
+    legacy_encoder = build_encoder_manifest(
+        information_policy_version=LEGACY_INFORMATION_POLICY_VERSION
+    )
+    directory = save_checkpoint(tmp_path, _model(legacy_encoder.input_dimension), legacy_encoder)
+
+    loaded = load_checkpoint(directory)
+    assert loaded.manifest.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
+    with pytest.raises(CheckpointCompatibilityError, match="encoder_layout_fingerprint"):
+        load_checkpoint(directory, encoder_manifest=build_encoder_manifest())
 
 
 def test_policy_descriptor_identity_is_content_derived_and_checkpoint_compatible(

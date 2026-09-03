@@ -316,8 +316,18 @@ def test_rulebook_policy_hides_unsplayed_covered_cards_but_open_policy_reveals_t
         state, PlayerId.PLAYER_2, Color.RED, (second, first, top), registry
     )
 
-    private_before = observe(state, PlayerId.PLAYER_1, registry)
-    private_after = observe(rearranged, PlayerId.PLAYER_1, registry)
+    private_before = observe(
+        state,
+        PlayerId.PLAYER_1,
+        registry,
+        policy=InformationPolicy.RULEBOOK_PRIVATE_COVERED,
+    )
+    private_after = observe(
+        rearranged,
+        PlayerId.PLAYER_1,
+        registry,
+        policy=InformationPolicy.RULEBOOK_PRIVATE_COVERED,
+    )
     red_before = private_before.player(PlayerId.PLAYER_2).board[tuple(Color).index(Color.RED)]
     assert red_before.covered_count is None
     assert red_before.covered_cards == ()
@@ -329,6 +339,7 @@ def test_rulebook_policy_hides_unsplayed_covered_cards_but_open_policy_reveals_t
     public_after = observe(
         rearranged, PlayerId.PLAYER_1, registry, policy=InformationPolicy.PUBLIC_COVERED
     )
+    assert observe(state, PlayerId.PLAYER_1, registry) == public_before
     assert public_before != public_after
 
 

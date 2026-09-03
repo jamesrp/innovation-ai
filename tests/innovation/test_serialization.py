@@ -41,6 +41,7 @@ from innovation_ai.innovation.serialization import (
     state_from_payload,
 )
 from innovation_ai.innovation.state import (
+    LEGACY_INFORMATION_POLICY_VERSION,
     GamePhase,
     TerminalReason,
     TerminalResult,
@@ -139,6 +140,14 @@ def test_strict_schemas_reject_versions_unknown_fields_and_bad_json() -> None:
         loads_action(json.dumps(action))
     with pytest.raises(SerializationError, match="invalid JSON"):
         loads_state(dumps_state(state)[:-12])
+
+
+def test_legacy_information_policy_state_round_trips_without_reinterpretation() -> None:
+    legacy = build_setup_state(905, information_policy_version=LEGACY_INFORMATION_POLICY_VERSION)
+
+    restored = loads_state(dumps_state(legacy))
+    assert restored == legacy
+    assert restored.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
 
 
 def test_state_load_rejects_incompatible_catalog_fingerprint() -> None:

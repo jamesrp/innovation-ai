@@ -814,7 +814,7 @@ def _validate_manifest_compatibility(
         "encoder_layout_fingerprint": encoder_manifest.layout_fingerprint,
         "card_data_fingerprint": encoder_manifest.card_data_fingerprint,
         "rules_version": RULES_VERSION,
-        "information_policy_version": INFORMATION_POLICY_VERSION,
+        "information_policy_version": encoder_manifest.information_policy_version,
         "engine_version": ENGINE_VERSION,
         "effects_fingerprint": effects_fingerprint(),
         "action_schema_version": ACTION_SCHEMA_VERSION,
@@ -846,7 +846,9 @@ def load_checkpoint(
     manifest = load_checkpoint_manifest(root)
     if root.name != manifest.checkpoint_id:
         raise CheckpointIntegrityError("checkpoint directory name differs from manifest ID")
-    current_encoder = encoder_manifest or build_encoder_manifest()
+    current_encoder = encoder_manifest or build_encoder_manifest(
+        information_policy_version=manifest.information_policy_version
+    )
     _validate_manifest_compatibility(manifest, current_encoder)
 
     model_path = root / "model.pt"

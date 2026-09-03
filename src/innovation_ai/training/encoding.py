@@ -34,6 +34,7 @@ from innovation_ai.innovation.observations import (
 from innovation_ai.innovation.state import (
     INFORMATION_POLICY_VERSION,
     RULES_VERSION,
+    SUPPORTED_INFORMATION_POLICY_VERSIONS,
     GamePhase,
 )
 from innovation_ai.innovation.types import (
@@ -259,17 +260,25 @@ def _feature_names(registry: CardRegistry) -> tuple[tuple[str, float], ...]:
     return tuple(names)
 
 
-def build_encoder_manifest(registry: CardRegistry | None = None) -> EncoderManifest:
-    """Generate the exact encoder-v1 layout from canonical catalog and enum order."""
+def build_encoder_manifest(
+    registry: CardRegistry | None = None,
+    *,
+    information_policy_version: str = INFORMATION_POLICY_VERSION,
+) -> EncoderManifest:
+    """Generate encoder-v1 layout for an explicit supported information policy."""
 
     registry = registry or load_card_registry()
+    if information_policy_version not in SUPPORTED_INFORMATION_POLICY_VERSIONS:
+        raise EncoderCompatibilityError(
+            f"unsupported information-policy version {information_policy_version!r}"
+        )
     named = _feature_names(registry)
     specs = tuple(FeatureSpec(name, offset, scale) for offset, (name, scale) in enumerate(named))
     provisional = EncoderManifest(
         encoder_version=ENCODER_VERSION,
         card_data_fingerprint=registry.data_fingerprint,
         rules_version=RULES_VERSION,
-        information_policy_version=INFORMATION_POLICY_VERSION,
+        information_policy_version=information_policy_version,
         card_order=tuple(
             str(card.id) for card in sorted(registry.cards, key=lambda item: str(item.id))
         ),
@@ -401,7 +410,10 @@ class FlatObservationEncoder:
     ) -> None:
         self.registry = registry or load_card_registry()
         self.manifest = manifest or build_encoder_manifest(self.registry)
-        expected = build_encoder_manifest(self.registry)
+        expected = build_encoder_manifest(
+            self.registry,
+            information_policy_version=self.manifest.information_policy_version,
+        )
         if self.manifest != expected:
             raise EncoderCompatibilityError(
                 "encoder manifest does not match the installed card data and schema layout"

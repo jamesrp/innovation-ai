@@ -33,6 +33,7 @@ from innovation_ai.innovation.replay import (
 )
 from innovation_ai.innovation.serialization import dumps_state, loads_state
 from innovation_ai.innovation.state import (
+    LEGACY_INFORMATION_POLICY_VERSION,
     ExplicitPlayerPosition,
     build_explicit_state,
     build_setup_state,
@@ -41,8 +42,17 @@ from innovation_ai.innovation.state import (
 from innovation_ai.innovation.types import CardId, Color, PlayerId
 
 
-def _complete_log(seed: int = 1001) -> GameLog:
-    recorder = GameLogRecorder(build_setup_state(seed))
+def _complete_log(
+    seed: int = 1001,
+    *,
+    information_policy_version: str | None = None,
+) -> GameLog:
+    state = (
+        build_setup_state(seed)
+        if information_policy_version is None
+        else build_setup_state(seed, information_policy_version=information_policy_version)
+    )
+    recorder = GameLogRecorder(state)
     for _ in range(200):
         decisions = recorder.decisions()
         if not decisions:
@@ -126,6 +136,20 @@ def test_mid_dogma_state_round_trips_at_a_public_choice_boundary() -> None:
     restored = loads_state(encoded, registry)
     assert state_hash(restored) == state_hash(paused)
     assert current_decisions(restored, registry, programs) == decisions
+
+
+def test_legacy_information_policy_log_replays_with_its_recorded_observations_and_hashes() -> None:
+    log = _complete_log(1021, information_policy_version=LEGACY_INFORMATION_POLICY_VERSION)
+
+    assert log.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
+    assert all(
+        transition.decision.observation.information_policy.value
+        == LEGACY_INFORMATION_POLICY_VERSION
+        for transition in log.transitions
+    )
+    replayed = replay_game_log(loads_game_log(dumps_game_log(log)))
+    assert replayed.state.information_policy_version == LEGACY_INFORMATION_POLICY_VERSION
+    assert replayed.state == replay_game_log(log).state
 
 
 def test_the_effects_fingerprint_is_recorded_and_verified() -> None:
