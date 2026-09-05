@@ -8,7 +8,9 @@ single completed-turn horizon and rejected selective continuation. The revised o
 now also failed: no tested 400/800/1,600-transition budget at one, two, or four determinizations met
 the cutoff, immediate-fallback, per-category completion, or throughput gates. No production search
 descriptor is frozen, and Milestone 4 is stopped before heuristic arenas, training, or strength
-evaluation. See `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`.
+evaluation. See `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. A nonbinding deterministic
+turn-rollout recovery proposal requested on September 5, 2026 is documented in
+`docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md`; adopting it requires an explicit owner decision.
 
 **Historical planning status (September 2, 2026):** approved for implementation; no implementation
 work had started at that time. Milestone 3 remains an immutable historical pilot. Its

@@ -70,6 +70,12 @@ the route budget cannot plausibly satisfy both completion and throughput. The ne
 explicit project decision about search optimization, search approximation, evaluator/policy design,
 or additional compute.
 
+On September 5, 2026, the owner requested a concrete plan for the deterministic policy-rollout
+option: evaluate every legal root action, then follow one player-safe deterministic continuation
+path through the rest of the turn. The proposal and pre-strength gates are documented in
+`docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md`. It is not yet an implementation approval and does
+not change the historical descriptors or results recorded here.
+
 ## Superseding one-turn decision
 
 **Owner decision, September 3, 2026:** replace the exhaustive 4/3/4 completed-turn horizon with an

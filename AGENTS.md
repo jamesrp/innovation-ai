@@ -29,6 +29,8 @@ Read these before changing engine or ML behavior:
     evaluation plan.
 11. `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md` — September 3, 2026 search measurements,
     historical reproduction evidence, frozen gates, and the current feasibility stop.
+12. `docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md` — proposed recovery using exhaustive root
+    actions and one deterministic player-safe continuation path per route.
 
 Do not silently resolve a rules ambiguity. Record the interpretation and a focused test; if
 it materially changes gameplay or observations, request a project decision first.

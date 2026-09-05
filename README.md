@@ -37,8 +37,9 @@ a project decision; see the feasibility addendum before running a new iteration.
 - Milestone 2 implementation/report: `docs/MILESTONE_2_REPORT.md`
 - Milestone 3 training prototype/report: `docs/MILESTONE_3_TRAINING_PROTOTYPE.md`,
   `docs/MILESTONE_3_REPORT.md`
-- Milestone 4 plan/feasibility stop: `docs/MILESTONE_4_PLAN.md`,
-  `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`
+- Milestone 4 plan/feasibility stop and proposed rollout recovery:
+  `docs/MILESTONE_4_PLAN.md`, `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`,
+  `docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md`
 - Afterstate feasibility decision: `docs/MILESTONE_2_AFTERSTATE_SPIKE.md`
 - Frozen encoder layouts: `docs/encoder_v1_manifest.json`,
   `docs/encoder_v1_public_covered_manifest.json`
