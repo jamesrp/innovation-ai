@@ -18,6 +18,7 @@ from innovation_ai.agents.base import Agent
 from innovation_ai.agents.descriptors import (
     RANDOM_AGENT_DESCRIPTOR,
     SAMPLED_MINIMAX_AGENT_DESCRIPTOR,
+    SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR,
     SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
     AgentDescriptor,
 )
@@ -38,7 +39,16 @@ from innovation_ai.innovation.actions import action_payload
 from innovation_ai.innovation.catalog import CardRegistry, load_card_registry
 from innovation_ai.innovation.state import GameState, state_hash
 from innovation_ai.innovation.types import PlayerId
-from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR, SearchDescriptor
+from innovation_ai.search.contracts import (
+    DEFAULT_ROLLOUT_ALGORITHM,
+    DEFAULT_SEARCH_VERSION,
+    MINIMAX_SEARCH_DESCRIPTOR_KIND,
+    PRODUCTION_SEARCH_DESCRIPTOR,
+    ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+    AnySearchDescriptor,
+    RolloutSearchDescriptor,
+    SearchDescriptor,
+)
 
 if TYPE_CHECKING:
     from innovation_ai.training.checkpoint import PolicyDescriptor
@@ -401,44 +411,143 @@ def _atomic(path: Path, text: str) -> None:
     temp.replace(path)
 
 
-def _sampled_minimax_descriptor_id(descriptor: AgentDescriptor | None) -> str | None:
-    """Return the referenced search identity for the versioned search baseline family."""
+@dataclass(frozen=True, slots=True)
+class _DecisionAlgorithmReference:
+    kind: str
+    descriptor_id: str
+    hypothetical_continuation_policy: str | None
+    legacy_provenance: bool
 
-    if descriptor is None or (
-        descriptor.name != SAMPLED_MINIMAX_AGENT_DESCRIPTOR.name
-        or descriptor.version != SAMPLED_MINIMAX_AGENT_DESCRIPTOR.version
+
+def _baseline_algorithm_reference(
+    descriptor: AgentDescriptor | None,
+) -> _DecisionAlgorithmReference | None:
+    """Resolve the exact algorithm family encoded by a sampled-search baseline."""
+
+    if descriptor is None:
+        return None
+    if (
+        descriptor.name == SAMPLED_MINIMAX_AGENT_DESCRIPTOR.name
+        and descriptor.version == SAMPLED_MINIMAX_AGENT_DESCRIPTOR.version
     ):
+        kind = MINIMAX_SEARCH_DESCRIPTOR_KIND
+        legacy_provenance = True
+    elif (
+        descriptor.name == SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.name
+        and descriptor.version == SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.version
+    ):
+        kind = ROLLOUT_SEARCH_DESCRIPTOR_KIND
+        legacy_provenance = False
+    else:
         return None
     parameters = dict(descriptor.parameters)
     if set(parameters) != {"search_descriptor_id"} or not isinstance(
         parameters["search_descriptor_id"], str
     ):
-        raise SelfPlayError("sampled-minimax baseline must reference one search descriptor")
-    return parameters["search_descriptor_id"]
-
-
-def _assignment_search_descriptor_id(assignment: EpisodeAssignment) -> str | None:
-    descriptor_ids: set[str] = set()
-    for policy in assignment.seat_policies:
-        baseline_id = _sampled_minimax_descriptor_id(policy.descriptor)
-        if baseline_id is not None:
-            descriptor_ids.add(baseline_id)
-        if policy.learned is not None and policy.learned.schema_version >= 2:
-            assert policy.learned.search_descriptor_id is not None
-            descriptor_ids.add(policy.learned.search_descriptor_id)
-    if len(descriptor_ids) > 1:
         raise SelfPlayError(
-            f"episode {assignment.episode_id!r} uses multiple search descriptor identities"
+            f"{descriptor.name} baseline must reference one decision-algorithm descriptor"
         )
-    return next(iter(descriptor_ids), None)
+    return _DecisionAlgorithmReference(
+        kind,
+        parameters["search_descriptor_id"],
+        None,
+        legacy_provenance,
+    )
+
+
+def _policy_algorithm_reference(policy: SeatPolicy) -> _DecisionAlgorithmReference | None:
+    baseline = _baseline_algorithm_reference(policy.descriptor)
+    if baseline is not None:
+        return baseline
+    learned = policy.learned
+    if learned is None or learned.schema_version == 1:
+        return None
+    if learned.schema_version == 2:
+        assert learned.search_descriptor_id is not None
+        return _DecisionAlgorithmReference(
+            MINIMAX_SEARCH_DESCRIPTOR_KIND,
+            learned.search_descriptor_id,
+            None,
+            True,
+        )
+    assert learned.fallback_algorithm_kind is not None
+    assert learned.fallback_algorithm_descriptor_id is not None
+    assert learned.hypothetical_continuation_policy is not None
+    return _DecisionAlgorithmReference(
+        learned.fallback_algorithm_kind,
+        learned.fallback_algorithm_descriptor_id,
+        learned.hypothetical_continuation_policy,
+        False,
+    )
+
+
+def _validate_search_descriptor(descriptor: object) -> AnySearchDescriptor:
+    if isinstance(descriptor, SearchDescriptor):
+        if descriptor.descriptor_kind != MINIMAX_SEARCH_DESCRIPTOR_KIND:
+            raise SelfPlayError("minimax descriptor kind is incompatible")
+        if descriptor.algorithm != DEFAULT_SEARCH_VERSION:
+            raise SelfPlayError("minimax descriptor algorithm is unsupported")
+        return descriptor
+    if isinstance(descriptor, RolloutSearchDescriptor):
+        if descriptor.descriptor_kind != ROLLOUT_SEARCH_DESCRIPTOR_KIND:
+            raise SelfPlayError("rollout descriptor kind is incompatible")
+        if descriptor.algorithm != DEFAULT_ROLLOUT_ALGORITHM:
+            raise SelfPlayError("rollout descriptor algorithm is unsupported")
+        return descriptor
+    raise SelfPlayError("search descriptor must be a minimax or rollout descriptor")
+
+
+def _hypothetical_policy_for(descriptor: AnySearchDescriptor) -> str:
+    if isinstance(descriptor, SearchDescriptor):
+        return "hand-engineered-minimax-both-players-v1"
+    return descriptor.continuation_agent_descriptor_id
+
+
+def _resolve_policy_algorithm(
+    policy: SeatPolicy,
+    search_descriptors: Mapping[str, AnySearchDescriptor],
+) -> tuple[_DecisionAlgorithmReference, AnySearchDescriptor] | None:
+    reference = _policy_algorithm_reference(policy)
+    if reference is None:
+        return None
+    try:
+        descriptor = search_descriptors[reference.descriptor_id]
+    except KeyError as error:
+        raise SelfPlayError(
+            f"required search descriptor {reference.descriptor_id!r} is unavailable"
+        ) from error
+    descriptor = _validate_search_descriptor(descriptor)
+    if descriptor.descriptor_kind != reference.kind:
+        raise SelfPlayError(
+            f"policy {policy.policy_id!r} decision-algorithm kind differs from its descriptor"
+        )
+    if reference.kind == MINIMAX_SEARCH_DESCRIPTOR_KIND and not isinstance(
+        descriptor, SearchDescriptor
+    ):
+        raise SelfPlayError(f"policy {policy.policy_id!r} requires a minimax descriptor")
+    if reference.kind == ROLLOUT_SEARCH_DESCRIPTOR_KIND and not isinstance(
+        descriptor, RolloutSearchDescriptor
+    ):
+        raise SelfPlayError(f"policy {policy.policy_id!r} requires a rollout descriptor")
+    if (
+        reference.hypothetical_continuation_policy is not None
+        and reference.hypothetical_continuation_policy != _hypothetical_policy_for(descriptor)
+    ):
+        raise SelfPlayError(
+            f"policy {policy.policy_id!r} hypothetical continuation differs from descriptor"
+        )
+    return reference, descriptor
 
 
 def _resolved_search_descriptors(
-    search_descriptors: Mapping[str, SearchDescriptor] | None,
-) -> dict[str, SearchDescriptor]:
-    descriptors = {PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR}
+    search_descriptors: Mapping[str, AnySearchDescriptor] | None,
+) -> dict[str, AnySearchDescriptor]:
+    descriptors: dict[str, AnySearchDescriptor] = {
+        PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR
+    }
     descriptors.update(search_descriptors or {})
     for descriptor_id, descriptor in descriptors.items():
+        _validate_search_descriptor(descriptor)
         if descriptor_id != descriptor.descriptor_id:
             raise SelfPlayError("search descriptor mapping key differs from descriptor identity")
     return descriptors
@@ -447,38 +556,59 @@ def _resolved_search_descriptors(
 def _provenance(
     manifest: GenerationManifest,
     assignment: EpisodeAssignment,
-    search_descriptors: Mapping[str, SearchDescriptor],
+    search_descriptors: Mapping[str, AnySearchDescriptor],
 ) -> CompactReplayProvenance:
-    seats = (
-        SeatPolicyProvenance(
-            PlayerId.PLAYER_1,
-            assignment.seat_policies[0].policy_id,
-            None
-            if assignment.seat_policies[0].learned is None
-            else assignment.seat_policies[0].learned.checkpoint_id,
-            AGENT_RNG_VERSION,
-        ),
-        SeatPolicyProvenance(
-            PlayerId.PLAYER_2,
-            assignment.seat_policies[1].policy_id,
-            None
-            if assignment.seat_policies[1].learned is None
-            else assignment.seat_policies[1].learned.checkpoint_id,
-            AGENT_RNG_VERSION,
-        ),
+    resolutions = tuple(
+        _resolve_policy_algorithm(policy, search_descriptors) for policy in assignment.seat_policies
     )
+    generic_provenance = any(
+        resolution is not None and not resolution[0].legacy_provenance for resolution in resolutions
+    )
+    seats = tuple(
+        SeatPolicyProvenance(
+            seat,
+            policy.policy_id,
+            None if policy.learned is None else policy.learned.checkpoint_id,
+            AGENT_RNG_VERSION,
+            resolution[0].kind if generic_provenance and resolution is not None else None,
+            (
+                resolution[0].descriptor_id
+                if generic_provenance and resolution is not None
+                else None
+            ),
+            (
+                resolution[1].determinization_count
+                if generic_provenance and resolution is not None
+                else None
+            ),
+        )
+        for seat, policy, resolution in zip(
+            PlayerId, assignment.seat_policies, resolutions, strict=True
+        )
+    )
+    assert len(seats) == 2
     learned = next((p.learned for p in assignment.seat_policies if p.learned), None)
-    search_descriptor_id = _assignment_search_descriptor_id(assignment)
-    search_descriptor = (
-        None if search_descriptor_id is None else search_descriptors.get(search_descriptor_id)
+    algorithm_descriptors = tuple(
+        resolution[1] for resolution in resolutions if resolution is not None
     )
-    if search_descriptor_id is not None and search_descriptor is None:
-        raise SelfPlayError(f"required search descriptor {search_descriptor_id!r} is unavailable")
+    legacy_descriptor_ids = {
+        resolution[0].descriptor_id
+        for resolution in resolutions
+        if resolution is not None and resolution[0].legacy_provenance
+    }
+    if not generic_provenance and len(legacy_descriptor_ids) > 1:
+        raise SelfPlayError(
+            f"episode {assignment.episode_id!r} uses multiple legacy search descriptor identities"
+        )
+    legacy_search_descriptor_id = (
+        None if generic_provenance else next(iter(legacy_descriptor_ids), None)
+    )
+    representative_algorithm = next(iter(algorithm_descriptors), None)
     return CompactReplayProvenance(
         manifest.config.run_id,
         sha256_digest(_json(manifest.payload())),
         manifest.config.generation,
-        seats,
+        (seats[0], seats[1]),
         ExplorationProvenance(
             "temperature-softmax-v1" if learned is None else learned.selector_version,
             0.0 if learned is None else learned.temperature,
@@ -486,8 +616,10 @@ def _provenance(
         ),
         DeterminizationProvenance(
             (
-                "information-set-sampler-v1"
-                if search_descriptor is None
+                "per-seat-decision-algorithm-v2"
+                if generic_provenance
+                else "information-set-sampler-v1"
+                if representative_algorithm is None
                 else (
                     "player-safe-search-sampler-v1"
                     if learned is None
@@ -496,20 +628,22 @@ def _provenance(
             ),
             "sha256-counter-v1",
             (
-                learned.determinization_count
+                0
+                if generic_provenance
+                else learned.determinization_count
                 if learned is not None
                 else 0
-                if search_descriptor is None
-                else search_descriptor.determinization_count
+                if representative_algorithm is None
+                else representative_algorithm.determinization_count
             ),
             (
                 "simple-heuristic"
                 if manifest.config.sampler_failure_mode is SamplerFailureMode.HEURISTIC
-                and search_descriptor is None
+                and representative_algorithm is None
                 else None
             ),
             manifest.config.sampler_failure_mode is SamplerFailureMode.STRICT,
-            search_descriptor_id,
+            legacy_search_descriptor_id,
         ),
     )
 
@@ -521,7 +655,7 @@ def run_generation(
     checkpoint_root: str | Path | None = None,
     stop_requested: Callable[[], bool] | None = None,
     registry: CardRegistry | None = None,
-    search_descriptors: Mapping[str, SearchDescriptor] | None = None,
+    search_descriptors: Mapping[str, AnySearchDescriptor] | None = None,
 ) -> tuple[str, ...]:
     """Run only missing whole shards. A stop is observed between shards, never mid-shard."""
     root = Path(run_dir)
@@ -536,6 +670,9 @@ def run_generation(
         save_manifest(existing, manifest)
     registry = registry or load_card_registry()
     resolved_search_descriptors = _resolved_search_descriptors(search_descriptors)
+    for assignment in manifest.assignments:
+        for policy in assignment.seat_policies:
+            _resolve_policy_algorithm(policy, resolved_search_descriptors)
     assignments = {a.episode_id: a for a in manifest.assignments}
     sealed: list[str] = []
     for shard in manifest.shards:
@@ -582,7 +719,7 @@ def _run_shard(
     assignments: Mapping[str, EpisodeAssignment],
     registry: CardRegistry,
     checkpoint_root: str | Path | None,
-    search_descriptors: Mapping[str, SearchDescriptor],
+    search_descriptors: Mapping[str, AnySearchDescriptor],
 ) -> None:
     from innovation_ai.innovation.zones import ValidationLevel, validation
 
@@ -605,7 +742,7 @@ def _run_shard_active(
     assignments: Mapping[str, EpisodeAssignment],
     registry: CardRegistry,
     checkpoint_root: str | Path | None,
-    search_descriptors: Mapping[str, SearchDescriptor],
+    search_descriptors: Mapping[str, AnySearchDescriptor],
 ) -> None:
     engine = InnovationEngineAdapter(registry)
 
@@ -653,18 +790,13 @@ def _run_shard_active(
                 descriptor = seat_policy.learned
                 descriptors.setdefault(descriptor.policy_id, descriptor)
                 learned_assignments[key] = LearnedPolicyAssignment(descriptor, descriptor.policy_id)
-                # Schema-v1 continuation routing remains scheduler-owned legacy behavior; schema-v2
-                # continuation routing resolves its immutable search descriptor in the scheduler.
+                # Schema-v1 continuation routing remains scheduler-owned legacy behavior; newer
+                # schemas resolve their immutable algorithm descriptors in the scheduler.
                 fallback_agents[key] = SimpleHeuristicAgent(registry)
             else:
-                search_descriptor_id = _sampled_minimax_descriptor_id(seat_policy.descriptor)
-                if search_descriptor_id is not None:
-                    try:
-                        search_descriptor = search_descriptors[search_descriptor_id]
-                    except KeyError as error:
-                        raise SelfPlayError(
-                            f"required search descriptor {search_descriptor_id!r} is unavailable"
-                        ) from error
+                resolution = _resolve_policy_algorithm(seat_policy, search_descriptors)
+                if resolution is not None:
+                    _, search_descriptor = resolution
                     search_assignments[key] = SearchPolicyAssignment(
                         seat_policy.policy_id, search_descriptor
                     )

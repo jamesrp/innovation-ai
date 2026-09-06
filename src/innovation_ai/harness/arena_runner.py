@@ -19,6 +19,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from innovation_ai.agents.base import Agent
+from innovation_ai.agents.descriptors import (
+    SAMPLED_MINIMAX_AGENT_DESCRIPTOR,
+    SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR,
+    AgentDescriptor,
+)
 from innovation_ai.agents.heuristic import SimpleHeuristicAgent
 from innovation_ai.agents.random import RandomAgent
 from innovation_ai.harness.arena import (
@@ -46,12 +51,22 @@ from innovation_ai.innovation.actions import action_payload
 from innovation_ai.innovation.serialization import JsonValue, canonical_json, parse_json
 from innovation_ai.innovation.state import GameState, TerminalResult, state_hash
 from innovation_ai.innovation.types import PlayerId
-from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR, SearchDescriptor
+from innovation_ai.search.contracts import (
+    DEFAULT_ROLLOUT_ALGORITHM,
+    DEFAULT_SEARCH_VERSION,
+    MINIMAX_SEARCH_DESCRIPTOR_KIND,
+    PRODUCTION_SEARCH_DESCRIPTOR,
+    ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+    AnySearchDescriptor,
+    RolloutSearchDescriptor,
+    SearchDescriptor,
+)
 
 if TYPE_CHECKING:
     from innovation_ai.harness.diagnostics import PrivateDiagnosticTraceRecorder
     from innovation_ai.harness.policy_scheduler import PolicyDecisionAudit
     from innovation_ai.search.minimax import SearchStatistics
+    from innovation_ai.search.rollout import RolloutStatistics
     from innovation_ai.training.checkpoint import PolicyDescriptor as TrainingPolicyDescriptor
     from innovation_ai.training.inference import FrozenEvaluatorCache
 
@@ -95,6 +110,12 @@ class ArenaSearchTelemetry:
     repeated_position_cutoffs: int = 0
     budget_cutoff_routes: int = 0
     immediate_leaf_fallback_routes: int = 0
+    continuation_engine_transitions: int = 0
+    completed_turn_routes: int = 0
+    terminal_routes: int = 0
+    maximum_route_transitions: int = 0
+    minimax_decisions: int = 0
+    rollout_decisions: int = 0
     decisions: int = 0
 
     @property
@@ -217,6 +238,45 @@ class PromotionOutcome:
 BaselineFactory = Callable[[int], Agent]
 
 
+def _validate_search_descriptor(descriptor: object) -> AnySearchDescriptor:
+    """Reject descriptor-kind, algorithm, and implementation-family confusion."""
+
+    if isinstance(descriptor, SearchDescriptor):
+        if descriptor.descriptor_kind != MINIMAX_SEARCH_DESCRIPTOR_KIND:
+            raise ArenaExecutionError("minimax descriptor kind is incompatible")
+        if descriptor.algorithm != DEFAULT_SEARCH_VERSION:
+            raise ArenaExecutionError("minimax descriptor algorithm is unsupported")
+        return descriptor
+    if isinstance(descriptor, RolloutSearchDescriptor):
+        if descriptor.descriptor_kind != ROLLOUT_SEARCH_DESCRIPTOR_KIND:
+            raise ArenaExecutionError("rollout descriptor kind is incompatible")
+        if descriptor.algorithm != DEFAULT_ROLLOUT_ALGORITHM:
+            raise ArenaExecutionError("rollout descriptor algorithm is unsupported")
+        return descriptor
+    raise ArenaExecutionError("search descriptor must be a minimax or rollout descriptor")
+
+
+def _canonical_search_policy_descriptor(descriptor: AnySearchDescriptor) -> AgentDescriptor:
+    """Return the content-addressed baseline policy identity for this implementation family."""
+
+    family = (
+        SAMPLED_MINIMAX_AGENT_DESCRIPTOR
+        if isinstance(descriptor, SearchDescriptor)
+        else SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR
+    )
+    return AgentDescriptor(
+        family.name,
+        family.version,
+        (("search_descriptor_id", descriptor.descriptor_id),),
+    )
+
+
+def _hypothetical_policy_for(descriptor: AnySearchDescriptor) -> str:
+    if isinstance(descriptor, SearchDescriptor):
+        return "hand-engineered-minimax-both-players-v1"
+    return descriptor.continuation_agent_descriptor_id
+
+
 class ArenaRunner:
     """Run only predeclared games, routing the policy selected for each physical seat.
 
@@ -232,8 +292,8 @@ class ArenaRunner:
         *,
         learned_policies: Mapping[str, TrainingPolicyDescriptor] = {},
         evaluator_cache: FrozenEvaluatorCache | None = None,
-        search_policy_descriptors: Mapping[str, SearchDescriptor] = {},
-        search_descriptors: Mapping[str, SearchDescriptor] | None = None,
+        search_policy_descriptors: Mapping[str, AnySearchDescriptor] = {},
+        search_descriptors: Mapping[str, AnySearchDescriptor] | None = None,
         baseline_factories: Mapping[str, BaselineFactory] = {},
         max_actions: int = 10_000,
         run_seed: int | str | bytes = 0,
@@ -247,7 +307,7 @@ class ArenaRunner:
         self._learned = dict(learned_policies)
         self._cache = evaluator_cache
         self._search_policy_descriptors = dict(search_policy_descriptors)
-        self._search_descriptors = {
+        self._search_descriptors: dict[str, AnySearchDescriptor] = {
             PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR
         }
         self._search_descriptors.update(search_descriptors or {})
@@ -257,6 +317,7 @@ class ArenaRunner:
         self._generation = generation
         self._trace_configuration = trace_configuration
         for descriptor_id, registered_descriptor in self._search_descriptors.items():
+            _validate_search_descriptor(registered_descriptor)
             if descriptor_id != registered_descriptor.descriptor_id:
                 raise ArenaExecutionError(
                     "search descriptor mapping key must equal descriptor identity"
@@ -272,11 +333,23 @@ class ArenaRunner:
                     f"non-search policy {policy_id!r} has a search descriptor"
                 )
             if search:
-                search_descriptor = self._search_policy_descriptors[policy_id]
+                if descriptor.checkpoint_id is not None:
+                    raise ArenaExecutionError(
+                        f"search baseline {policy_id!r} cannot reference a learned checkpoint"
+                    )
+                search_descriptor = _validate_search_descriptor(
+                    self._search_policy_descriptors[policy_id]
+                )
                 registered = self._search_descriptors.get(search_descriptor.descriptor_id)
                 if registered != search_descriptor:
                     raise ArenaExecutionError(
                         f"search policy {policy_id!r} descriptor identity is unavailable"
+                    )
+                canonical_policy = _canonical_search_policy_descriptor(search_descriptor)
+                if policy_id != canonical_policy.descriptor_id:
+                    raise ArenaExecutionError(
+                        f"search policy {policy_id!r} is not the canonical "
+                        f"{canonical_policy.name!r} descriptor for its implementation family"
                     )
             learned = policy_id in self._learned
             if descriptor.policy_kind == "learned" and not learned:
@@ -292,6 +365,44 @@ class ArenaRunner:
                     f"learned policy {policy_id!r} checkpoint reference does not match "
                     "its descriptor"
                 )
+            if learned:
+                learned_descriptor = self._learned[policy_id]
+                algorithm_kind: str | None
+                algorithm_descriptor_id: str | None
+                hypothetical_policy: str | None
+                if learned_descriptor.schema_version == 1:
+                    continue
+                if learned_descriptor.schema_version == 2:
+                    algorithm_kind = MINIMAX_SEARCH_DESCRIPTOR_KIND
+                    algorithm_descriptor_id = learned_descriptor.search_descriptor_id
+                    hypothetical_policy = None
+                else:
+                    algorithm_kind = learned_descriptor.fallback_algorithm_kind
+                    algorithm_descriptor_id = learned_descriptor.fallback_algorithm_descriptor_id
+                    hypothetical_policy = learned_descriptor.hypothetical_continuation_policy
+                if algorithm_kind is None or algorithm_descriptor_id is None:
+                    raise ArenaExecutionError(
+                        f"learned policy {policy_id!r} has incomplete fallback algorithm identity"
+                    )
+                registered = self._search_descriptors.get(algorithm_descriptor_id)
+                if registered is None:
+                    raise ArenaExecutionError(
+                        f"learned policy {policy_id!r} fallback descriptor identity is unavailable"
+                    )
+                registered = _validate_search_descriptor(registered)
+                if registered.descriptor_kind != algorithm_kind:
+                    raise ArenaExecutionError(
+                        f"learned policy {policy_id!r} fallback algorithm kind is incompatible"
+                    )
+                if learned_descriptor.schema_version == 2:
+                    if not isinstance(registered, SearchDescriptor):
+                        raise ArenaExecutionError(
+                            f"schema-v2 learned policy {policy_id!r} requires minimax fallback"
+                        )
+                elif hypothetical_policy != _hypothetical_policy_for(registered):
+                    raise ArenaExecutionError(
+                        f"learned policy {policy_id!r} hypothetical continuation is incompatible"
+                    )
         engine_information_policy = getattr(self._engine, "information_policy_version", None)
         if engine_information_policy is not None:
             for policy_id, learned_descriptor in self._learned.items():
@@ -413,7 +524,8 @@ class ArenaRunner:
 
         submitted_actions = {game_id: 0 for game_id in plan_by_game}
         action_tails: dict[str, list[dict[str, object]]] = {game_id: [] for game_id in plan_by_game}
-        search_statistics: list[SearchStatistics] = []
+        minimax_statistics: list[SearchStatistics] = []
+        rollout_statistics: list[RolloutStatistics] = []
         try:
             self._finish_initial_terminal_traces(runner, trace_recorders, trace_artifacts)
             while True:
@@ -523,9 +635,19 @@ class ArenaRunner:
                 if scheduler is not None:
                     assert policy_schedule is not None
                     scheduler.record_committed(policy_schedule)
-                    search_statistics.extend(
-                        selection.statistics for selection in policy_schedule.search_selections
-                    )
+                    from innovation_ai.search.minimax import SearchStatistics
+                    from innovation_ai.search.rollout import RolloutStatistics
+
+                    for selection in policy_schedule.search_selections:
+                        statistics = selection.statistics
+                        if isinstance(statistics, SearchStatistics):
+                            minimax_statistics.append(statistics)
+                        elif isinstance(statistics, RolloutStatistics):
+                            rollout_statistics.append(statistics)
+                        else:
+                            raise ArenaExecutionError(
+                                "scheduler returned unsupported search statistics"
+                            )
                 for submission in submissions:
                     submitted_actions[submission.game_id] += 1
                     action_tails[submission.game_id].append(
@@ -563,24 +685,42 @@ class ArenaRunner:
             raise
 
         telemetry = ArenaSearchTelemetry(
-            routes=sum(item.routes for item in search_statistics),
-            nodes=sum(item.nodes for item in search_statistics),
+            routes=(
+                sum(item.routes for item in minimax_statistics)
+                + sum(item.routes for item in rollout_statistics)
+            ),
+            nodes=sum(item.nodes for item in minimax_statistics),
             recursive_engine_transitions=sum(
-                item.recursive_engine_transitions for item in search_statistics
+                item.recursive_engine_transitions for item in minimax_statistics
             ),
-            root_transitions=sum(item.root_transitions for item in search_statistics),
-            mandatory_setup_transitions=sum(
-                item.mandatory_setup_transitions for item in search_statistics
+            root_transitions=(
+                sum(item.root_transitions for item in minimax_statistics)
+                + sum(item.root_engine_transitions for item in rollout_statistics)
             ),
-            transposition_hits=sum(item.transposition_hits for item in search_statistics),
+            mandatory_setup_transitions=(
+                sum(item.mandatory_setup_transitions for item in minimax_statistics)
+                + sum(item.setup_response_engine_transitions for item in rollout_statistics)
+            ),
+            transposition_hits=sum(item.transposition_hits for item in minimax_statistics),
             repeated_position_cutoffs=sum(
-                item.repeated_position_cutoffs for item in search_statistics
+                item.repeated_position_cutoffs for item in minimax_statistics
             ),
-            budget_cutoff_routes=sum(item.budget_cutoff_routes for item in search_statistics),
+            budget_cutoff_routes=sum(item.budget_cutoff_routes for item in minimax_statistics),
             immediate_leaf_fallback_routes=sum(
-                item.immediate_leaf_fallback_routes for item in search_statistics
+                item.immediate_leaf_fallback_routes for item in minimax_statistics
             ),
-            decisions=len(search_statistics),
+            continuation_engine_transitions=sum(
+                item.continuation_engine_transitions for item in rollout_statistics
+            ),
+            completed_turn_routes=sum(item.completed_turn_routes for item in rollout_statistics),
+            terminal_routes=sum(item.terminal_routes for item in rollout_statistics),
+            maximum_route_transitions=max(
+                (item.maximum_route_transitions for item in rollout_statistics),
+                default=0,
+            ),
+            minimax_decisions=len(minimax_statistics),
+            rollout_decisions=len(rollout_statistics),
+            decisions=len(minimax_statistics) + len(rollout_statistics),
         )
         return ArenaExecution(
             result,
@@ -722,15 +862,31 @@ class ArenaRunner:
         ]
         search_metadata = [self._search_policy_metadata(policy_id) for policy_id in search_ids]
         for policy_id in learned_ids:
-            descriptor_id = self._learned[policy_id].search_descriptor_id
-            if descriptor_id is not None and descriptor_id in self._search_descriptors:
-                search_metadata.append(
-                    {
-                        "policy_id": policy_id,
-                        "continuation_descriptor_id": descriptor_id,
-                        "descriptor": self._search_descriptors[descriptor_id].payload(),
-                    }
-                )
+            learned_descriptor = self._learned[policy_id]
+            if learned_descriptor.schema_version == 2:
+                descriptor_id = learned_descriptor.search_descriptor_id
+                if descriptor_id is not None and descriptor_id in self._search_descriptors:
+                    search_metadata.append(
+                        {
+                            "policy_id": policy_id,
+                            "continuation_descriptor_id": descriptor_id,
+                            "descriptor": self._search_descriptors[descriptor_id].payload(),
+                        }
+                    )
+            elif learned_descriptor.schema_version >= 3:
+                descriptor_id = learned_descriptor.fallback_algorithm_descriptor_id
+                if descriptor_id is not None and descriptor_id in self._search_descriptors:
+                    search_metadata.append(
+                        {
+                            "policy_id": policy_id,
+                            "fallback_algorithm_kind": (learned_descriptor.fallback_algorithm_kind),
+                            "fallback_algorithm_descriptor_id": descriptor_id,
+                            "hypothetical_continuation_policy": (
+                                learned_descriptor.hypothetical_continuation_policy
+                            ),
+                            "descriptor": self._search_descriptors[descriptor_id].payload(),
+                        }
+                    )
         sampler_metadata = [
             {
                 "policy_id": policy_id,
@@ -780,13 +936,27 @@ class ArenaRunner:
 
     def _learned_policy_metadata(self, policy_id: str) -> dict[str, object]:
         descriptor = self._learned[policy_id]
-        return {
+        metadata: dict[str, object] = {
             "arena_policy_id": policy_id,
             "learned_policy_id": descriptor.policy_id,
             "checkpoint_id": descriptor.checkpoint_id,
-            "search_descriptor_id": descriptor.search_descriptor_id,
             "schema_version": descriptor.schema_version,
         }
+        if descriptor.schema_version <= 2:
+            metadata["search_descriptor_id"] = descriptor.search_descriptor_id
+        else:
+            metadata.update(
+                {
+                    "fallback_algorithm_kind": descriptor.fallback_algorithm_kind,
+                    "fallback_algorithm_descriptor_id": (
+                        descriptor.fallback_algorithm_descriptor_id
+                    ),
+                    "hypothetical_continuation_policy": (
+                        descriptor.hypothetical_continuation_policy
+                    ),
+                }
+            )
+        return metadata
 
     def _search_policy_metadata(self, policy_id: str) -> dict[str, object]:
         descriptor = self._search_policy_descriptors[policy_id]

@@ -45,6 +45,7 @@ from innovation_ai.innovation.state import (
 )
 from innovation_ai.innovation.strategic import strategic_state_digest
 from innovation_ai.innovation.types import CardId, Color, PlayerId, SplayDirection
+from innovation_ai.search.contracts import RolloutFailureTrace
 
 DIAGNOSTIC_TRACE_FORMAT = "innovation-ai-private-diagnostic-trace"
 DIAGNOSTIC_TRACE_SCHEMA_VERSION = 1
@@ -902,7 +903,14 @@ def _search_payload(audit: PolicyDecisionAudit) -> DiagnosticJsonObject | None:
 def _failure_payload(error: BaseException | None) -> DiagnosticJsonObject | None:
     if error is None:
         return None
-    return {"type": type(error).__name__, "message": str(error)}
+    payload: DiagnosticJsonObject = {"type": type(error).__name__, "message": str(error)}
+    cause = getattr(error, "cause", None)
+    if isinstance(cause, BaseException):
+        payload["cause"] = cast(DiagnosticJsonValue, _failure_payload(cause))
+    trace = getattr(error, "trace", None)
+    if isinstance(trace, RolloutFailureTrace):
+        payload["rollout_failure_trace"] = cast(DiagnosticJsonValue, trace.payload())
+    return payload
 
 
 def _card_zones(state: GameState) -> dict[CardId, str]:
@@ -1384,6 +1392,23 @@ def _redacted_search(payload: DiagnosticJsonObject | None) -> DiagnosticJsonObje
     )
     selected = _integer(telemetry["selected_action_index"], "search.selected")
     statistics = _object(payload["statistics"], "search.statistics")
+    if "rollout_descriptor_id" in telemetry:
+        return {
+            "descriptor_kind": "rollout-search",
+            "search_descriptor_id": telemetry["rollout_descriptor_id"],
+            "candidate_count": len(means),
+            "minimum_mean": min(means),
+            "maximum_mean": max(means),
+            "selected_mean": means[selected],
+            "tie_count": len(_array(telemetry["tied_action_indices"], "search.ties")),
+            "route_count": statistics["routes"],
+            "root_engine_transitions": statistics["root_engine_transitions"],
+            "setup_response_engine_transitions": statistics["setup_response_engine_transitions"],
+            "continuation_engine_transitions": statistics["continuation_engine_transitions"],
+            "completed_turn_routes": statistics["completed_turn_routes"],
+            "terminal_routes": statistics["terminal_routes"],
+            "maximum_route_transitions": statistics["maximum_route_transitions"],
+        }
     return {
         "search_descriptor_id": telemetry["search_descriptor_id"],
         "candidate_count": len(means),
@@ -1456,6 +1481,9 @@ def _validate_search_payload(payload: DiagnosticJsonObject | None) -> None:
         return
     _exact_keys(payload, {"telemetry", "statistics"})
     telemetry = _object(payload["telemetry"], "search.telemetry")
+    if "rollout_descriptor_id" in telemetry:
+        _validate_rollout_search_payload(payload, telemetry)
+        return
     required = {
         "schema_version",
         "search_descriptor_id",
@@ -1519,6 +1547,182 @@ def _validate_search_payload(payload: DiagnosticJsonObject | None) -> None:
             raise DiagnosticTraceSchemaError("search statistics cannot be negative")
     if _integer(statistics["routes"], "search.statistics.routes") != len(routes):
         raise DiagnosticTraceSchemaError("search route statistic differs from route telemetry")
+
+
+def _validate_rollout_search_payload(
+    payload: DiagnosticJsonObject,
+    telemetry: DiagnosticJsonObject,
+) -> None:
+    required = {
+        "schema_version",
+        "rollout_descriptor_id",
+        "continuation_agent_descriptor_id",
+        "information_set_digest",
+        "sampler_seed_digest",
+        "determinization_count",
+        "action_keys",
+        "action_sample_values",
+        "action_mean_values",
+        "selected_action_index",
+        "selected_action_key",
+        "tied_action_indices",
+        "routes",
+    }
+    _exact_keys(telemetry, required)
+    if _integer(telemetry["schema_version"], "rollout.schema_version") != 1:
+        raise DiagnosticTraceSchemaError("unsupported rollout telemetry schema version")
+    for key in ("rollout_descriptor_id", "information_set_digest"):
+        _digest(_string(telemetry[key], f"rollout.{key}"), f"rollout {key}")
+    _nonempty(
+        _string(
+            telemetry["continuation_agent_descriptor_id"],
+            "rollout.continuation_agent_descriptor_id",
+        ),
+        "rollout continuation agent descriptor",
+    )
+    sampler_digest = telemetry["sampler_seed_digest"]
+    if sampler_digest is not None:
+        _digest(_string(sampler_digest, "rollout.sampler_seed_digest"), "rollout sampler seed")
+    determinization_count = _integer(
+        telemetry["determinization_count"], "rollout.determinization_count"
+    )
+    if determinization_count < 1:
+        raise DiagnosticTraceSchemaError("rollout determinization count must be positive")
+    keys = tuple(
+        _string(value, "rollout.action_keys[]")
+        for value in _array(telemetry["action_keys"], "rollout.action_keys")
+    )
+    for key in keys:
+        _nonempty(key, "rollout action key")
+    means = tuple(
+        _number(value, "rollout.action_mean_values[]")
+        for value in _array(telemetry["action_mean_values"], "rollout.action_mean_values")
+    )
+    sample_values = tuple(
+        tuple(
+            _number(value, "rollout.action_sample_values[][]")
+            for value in _array(raw, "rollout.action_sample_values[]")
+        )
+        for raw in _array(telemetry["action_sample_values"], "rollout.action_sample_values")
+    )
+    if (
+        not keys
+        or len(set(keys)) != len(keys)
+        or len(keys) != len(means)
+        or len(keys) != len(sample_values)
+        or any(len(values) != determinization_count for values in sample_values)
+    ):
+        raise DiagnosticTraceSchemaError("rollout action samples and means are inconsistent")
+    selected = _integer(telemetry["selected_action_index"], "rollout.selected_action_index")
+    if not 0 <= selected < len(keys):
+        raise DiagnosticTraceSchemaError("rollout selected action index is out of range")
+    if _string(telemetry["selected_action_key"], "rollout.selected_action_key") != keys[selected]:
+        raise DiagnosticTraceSchemaError("rollout selected action key differs from its index")
+    ties = tuple(
+        _integer(value, "rollout.tied_action_indices[]")
+        for value in _array(telemetry["tied_action_indices"], "rollout.tied_action_indices")
+    )
+    if ties != tuple(sorted(set(ties))) or any(index < 0 or index >= len(keys) for index in ties):
+        raise DiagnosticTraceSchemaError("rollout tied action indices are invalid")
+    routes = _array(telemetry["routes"], "rollout.routes")
+    route_pairs = tuple(
+        _validate_rollout_route(_object(raw, "rollout.route"), keys) for raw in routes
+    )
+    expected_pairs = tuple(
+        (action_index, sample_index)
+        for action_index in range(len(keys))
+        for sample_index in range(determinization_count)
+    )
+    if route_pairs != expected_pairs:
+        raise DiagnosticTraceSchemaError("rollout routes do not cover stable action/sample pairs")
+    statistics = _object(payload["statistics"], "rollout.statistics")
+    expected_statistics = {
+        "routes",
+        "root_engine_transitions",
+        "setup_response_engine_transitions",
+        "continuation_engine_transitions",
+        "completed_turn_routes",
+        "terminal_routes",
+        "maximum_route_transitions",
+    }
+    _exact_keys(statistics, expected_statistics)
+    for key, value in statistics.items():
+        if _integer(value, f"rollout.statistics.{key}") < 0:
+            raise DiagnosticTraceSchemaError("rollout statistics cannot be negative")
+    if _integer(statistics["routes"], "rollout.statistics.routes") != len(routes):
+        raise DiagnosticTraceSchemaError("rollout route statistic differs from route telemetry")
+
+
+def _validate_rollout_route(
+    payload: DiagnosticJsonObject,
+    action_keys: tuple[str, ...],
+) -> tuple[int, int]:
+    expected = {
+        "schema_version",
+        "root_action_index",
+        "determinization_index",
+        "root_action_key",
+        "value",
+        "terminal_reason",
+        "leaf",
+        "root_engine_transitions",
+        "setup_response_engine_transitions",
+        "continuation_engine_transitions",
+        "total_engine_transitions",
+        "completed_turn_count",
+        "setup_response_action_key",
+        "rollout_path",
+        "safety_ceiling_hit",
+    }
+    _exact_keys(payload, expected, "rollout.route")
+    if _integer(payload["schema_version"], "rollout.route.schema_version") != 1:
+        raise DiagnosticTraceSchemaError("unsupported rollout route schema version")
+    root_index = _integer(payload["root_action_index"], "rollout.route.root_action_index")
+    sample_index = _integer(payload["determinization_index"], "rollout.route.determinization_index")
+    if not 0 <= root_index < len(action_keys) or sample_index < 0:
+        raise DiagnosticTraceSchemaError("rollout route index is out of range")
+    if (
+        _string(payload["root_action_key"], "rollout.route.root_action_key")
+        != action_keys[root_index]
+    ):
+        raise DiagnosticTraceSchemaError("rollout route action key differs from root telemetry")
+    _number(payload["value"], "rollout.route.value")
+    terminal_reason = payload["terminal_reason"]
+    if terminal_reason is not None:
+        _nonempty(_string(terminal_reason, "rollout.route.terminal_reason"), "terminal reason")
+    for key in (
+        "root_engine_transitions",
+        "setup_response_engine_transitions",
+        "continuation_engine_transitions",
+        "total_engine_transitions",
+        "completed_turn_count",
+    ):
+        if _integer(payload[key], f"rollout.route.{key}") < 0:
+            raise DiagnosticTraceSchemaError("rollout route counts cannot be negative")
+    setup_key = payload["setup_response_action_key"]
+    if setup_key is not None:
+        _nonempty(_string(setup_key, "rollout.route.setup_response_action_key"), "setup key")
+    if _boolean(payload["safety_ceiling_hit"], "rollout.route.safety_ceiling_hit"):
+        raise DiagnosticTraceSchemaError("successful rollout telemetry cannot contain ceiling hit")
+    leaf = _object(payload["leaf"], "rollout.route.leaf")
+    _exact_keys(leaf, {"value", "terminal_reason", "components"}, "rollout.route.leaf")
+    _number(leaf["value"], "rollout.route.leaf.value")
+    components = leaf["components"]
+    if components is not None:
+        component_payload = _object(components, "rollout.route.leaf.components")
+        _exact_keys(
+            component_payload,
+            {"achievement", "score", "icons", "board", "hand"},
+            "rollout.route.leaf.components",
+        )
+        for key, value in component_payload.items():
+            _number(value, f"rollout.route.leaf.components.{key}")
+    for raw in _array(payload["rollout_path"], "rollout.route.rollout_path"):
+        step = _object(raw, "rollout.route.rollout_path[]")
+        _exact_keys(step, {"action_key", "chooser", "decision_kind"})
+        for key, value in step.items():
+            _nonempty(_string(value, f"rollout.route.rollout_path.{key}"), key)
+    return root_index, sample_index
 
 
 def _validate_search_route(payload: DiagnosticJsonObject, action_count: int) -> None:
@@ -1735,11 +1939,121 @@ def _optional_string_mapping(value: DiagnosticJsonValue, path: str) -> dict[str,
 
 def _optional_failure(value: DiagnosticJsonValue, path: str) -> DiagnosticJsonObject | None:
     payload = _optional_object(value, path)
-    if payload is not None:
-        _exact_keys(payload, {"type", "message"})
-        _string(payload["type"], f"{path}.type")
-        _string(payload["message"], f"{path}.message")
+    if payload is None:
+        return None
+    required = {"type", "message"}
+    optional = {"cause", "rollout_failure_trace"}
+    if not required <= payload.keys() or payload.keys() - required - optional:
+        raise DiagnosticTraceSchemaError(
+            f"{path} keys differ: required={sorted(required)}, "
+            f"unexpected={sorted(payload.keys() - required - optional)}"
+        )
+    _string(payload["type"], f"{path}.type")
+    _string(payload["message"], f"{path}.message")
+    if "cause" in payload:
+        _optional_failure(payload["cause"], f"{path}.cause")
+    if "rollout_failure_trace" in payload:
+        _validate_rollout_failure_trace(
+            _object(payload["rollout_failure_trace"], f"{path}.rollout_failure_trace"),
+            f"{path}.rollout_failure_trace",
+        )
     return payload
+
+
+def _validate_rollout_failure_trace(payload: DiagnosticJsonObject, path: str) -> None:
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "rollout_descriptor_id",
+            "continuation_agent_descriptor_id",
+            "information_set_digest",
+            "failure",
+            "route",
+        },
+        path,
+    )
+    if _integer(payload["schema_version"], f"{path}.schema_version") != 1:
+        raise DiagnosticTraceSchemaError("unsupported rollout failure trace schema version")
+    for key in ("rollout_descriptor_id", "information_set_digest"):
+        _digest(_string(payload[key], f"{path}.{key}"), key)
+    _nonempty(
+        _string(
+            payload["continuation_agent_descriptor_id"],
+            f"{path}.continuation_agent_descriptor_id",
+        ),
+        "rollout failure continuation descriptor",
+    )
+    _nonempty(_string(payload["failure"], f"{path}.failure"), "rollout failure reason")
+    route = _object(payload["route"], f"{path}.route")
+    _exact_keys(
+        route,
+        {
+            "schema_version",
+            "root_action_index",
+            "determinization_index",
+            "root_action_key",
+            "value",
+            "terminal_reason",
+            "leaf",
+            "root_engine_transitions",
+            "setup_response_engine_transitions",
+            "continuation_engine_transitions",
+            "total_engine_transitions",
+            "completed_turn_count",
+            "setup_response_action_key",
+            "rollout_path",
+            "safety_ceiling_hit",
+        },
+        f"{path}.route",
+    )
+    if _integer(route["schema_version"], f"{path}.route.schema_version") != 1:
+        raise DiagnosticTraceSchemaError("unsupported rollout failure route schema version")
+    for key in ("root_action_index", "determinization_index"):
+        if _integer(route[key], f"{path}.route.{key}") < 0:
+            raise DiagnosticTraceSchemaError("rollout failure route indices cannot be negative")
+    _nonempty(
+        _string(route["root_action_key"], f"{path}.route.root_action_key"),
+        "rollout failure root action key",
+    )
+    if (
+        route["value"] is not None
+        or route["terminal_reason"] is not None
+        or route["leaf"] is not None
+    ):
+        raise DiagnosticTraceSchemaError("rollout failure route cannot contain a leaf result")
+    counts: dict[str, int] = {}
+    for key in (
+        "root_engine_transitions",
+        "setup_response_engine_transitions",
+        "continuation_engine_transitions",
+        "total_engine_transitions",
+        "completed_turn_count",
+    ):
+        counts[key] = _integer(route[key], f"{path}.route.{key}")
+        if counts[key] < 0:
+            raise DiagnosticTraceSchemaError("rollout failure route counts cannot be negative")
+    if counts["total_engine_transitions"] != (
+        counts["root_engine_transitions"]
+        + counts["setup_response_engine_transitions"]
+        + counts["continuation_engine_transitions"]
+    ):
+        raise DiagnosticTraceSchemaError("rollout failure transition total is inconsistent")
+    if counts["completed_turn_count"] != 0:
+        raise DiagnosticTraceSchemaError("rollout ceiling failure cannot complete the turn")
+    setup_key = route["setup_response_action_key"]
+    if setup_key is not None:
+        _nonempty(_string(setup_key, f"{path}.route.setup_response_action_key"), "setup key")
+    steps = _array(route["rollout_path"], f"{path}.route.rollout_path")
+    if len(steps) != counts["continuation_engine_transitions"]:
+        raise DiagnosticTraceSchemaError("rollout failure path and transition count differ")
+    for raw in steps:
+        step = _object(raw, f"{path}.route.rollout_path[]")
+        _exact_keys(step, {"action_key", "chooser", "decision_kind"}, f"{path}.route.path")
+        for key, item in step.items():
+            _nonempty(_string(item, f"{path}.route.path.{key}"), key)
+    if not _boolean(route["safety_ceiling_hit"], f"{path}.route.safety_ceiling_hit"):
+        raise DiagnosticTraceSchemaError("rollout failure route must record a safety-ceiling hit")
 
 
 def _validated_action_payload(value: DiagnosticJsonValue, path: str) -> DiagnosticJsonObject:

@@ -15,6 +15,8 @@ from innovation_ai.innovation.state import (
 )
 from innovation_ai.innovation.types import CardId, PlayerId
 from innovation_ai.training.compact_replay import (
+    GENERIC_COMPACT_REPLAY_SCHEMA_VERSION,
+    LEGACY_COMPACT_REPLAY_SCHEMA_VERSION,
     CompactEpisode,
     CompactReplayCompatibilityError,
     CompactReplayDivergenceError,
@@ -82,7 +84,15 @@ def test_compact_episode_round_trip_is_actions_only_and_verifiable() -> None:
 def test_determinization_search_identity_is_optional_and_digest_validated() -> None:
     legacy = _episode(1006, "legacy-provenance")
     legacy_encoded = dumps_compact_episode(legacy)
+    assert legacy.schema_version == LEGACY_COMPACT_REPLAY_SCHEMA_VERSION
     assert '"search_descriptor_id"' not in legacy_encoded
+    legacy_seat = json.loads(legacy_encoded)["seat_mapping"][0]
+    assert set(legacy_seat) == {
+        "seat",
+        "policy_descriptor_id",
+        "checkpoint_id",
+        "agent_rng_version",
+    }
     assert dumps_compact_episode(loads_compact_episode(legacy_encoded)) == legacy_encoded
 
     search_id = "sha256:" + "a" * 64
@@ -105,6 +115,51 @@ def test_determinization_search_identity_is_optional_and_digest_validated() -> N
     malformed_text = json.dumps(malformed, sort_keys=True, separators=(",", ":"))
     with pytest.raises(CompactReplaySchemaError, match="tagged lower-case SHA-256"):
         loads_compact_episode(malformed_text)
+
+    generic = replace(
+        legacy,
+        provenance=replace(
+            legacy.provenance,
+            seat_mapping=(
+                replace(
+                    legacy.provenance.seat_mapping[0],
+                    decision_algorithm_kind="rollout-search",
+                    decision_algorithm_descriptor_id=search_id,
+                    decision_algorithm_determinization_count=2,
+                ),
+                legacy.provenance.seat_mapping[1],
+            ),
+        ),
+        schema_version=GENERIC_COMPACT_REPLAY_SCHEMA_VERSION,
+    )
+    generic_encoded = dumps_compact_episode(generic)
+    assert loads_compact_episode(generic_encoded) == generic
+    generic_seat = json.loads(generic_encoded)["seat_mapping"][0]
+    assert generic_seat["decision_algorithm_kind"] == "rollout-search"
+    assert generic_seat["decision_algorithm_descriptor_id"] == search_id
+    assert generic_seat["decision_algorithm_determinization_count"] == 2
+    assert generic.schema_version == GENERIC_COMPACT_REPLAY_SCHEMA_VERSION
+    assert "search_descriptor_id" not in json.loads(generic_encoded)["determinization"]
+    assert json.loads(generic_encoded)["seat_mapping"][1]["decision_algorithm_kind"] is None
+
+    v1_with_generic_seat = json.loads(legacy_encoded)
+    v1_with_generic_seat["seat_mapping"][0].update(
+        {
+            "decision_algorithm_kind": "rollout-search",
+            "decision_algorithm_descriptor_id": search_id,
+            "decision_algorithm_determinization_count": 2,
+        }
+    )
+    with pytest.raises(CompactReplaySchemaError, match="keys differ"):
+        loads_compact_episode(
+            json.dumps(v1_with_generic_seat, sort_keys=True, separators=(",", ":"))
+        )
+
+    with pytest.raises(ValueError, match="supplied together"):
+        replace(
+            legacy.provenance.seat_mapping[0],
+            decision_algorithm_kind="rollout-search",
+        )
 
 
 def test_compact_episode_rejects_noncanonical_edits_truncation_illegal_and_incompatible() -> None:

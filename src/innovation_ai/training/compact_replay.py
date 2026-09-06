@@ -60,7 +60,12 @@ from innovation_ai.innovation.state import (
 from innovation_ai.innovation.types import PlayerId
 
 COMPACT_REPLAY_FORMAT = "innovation-ai-compact-episode"
-COMPACT_REPLAY_SCHEMA_VERSION = 1
+LEGACY_COMPACT_REPLAY_SCHEMA_VERSION = 1
+GENERIC_COMPACT_REPLAY_SCHEMA_VERSION = 2
+COMPACT_REPLAY_SCHEMA_VERSION = GENERIC_COMPACT_REPLAY_SCHEMA_VERSION
+SUPPORTED_COMPACT_REPLAY_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_COMPACT_REPLAY_SCHEMA_VERSION, GENERIC_COMPACT_REPLAY_SCHEMA_VERSION}
+)
 COMPACT_REPLAY_MANIFEST_FORMAT = "innovation-ai-compact-replay-manifest"
 COMPACT_REPLAY_MANIFEST_SCHEMA_VERSION = 1
 
@@ -158,19 +163,46 @@ class SeatPolicyProvenance:
 
     ``checkpoint_id`` is ``None`` for non-checkpoint policies such as a heuristic fallback.
     ``policy_descriptor_id`` remains mandatory because it identifies the complete policy settings,
-    not merely model weights.
+    not merely model weights. Schema v2 adds an all-or-none generic decision-algorithm triple;
+    schema-v1 payloads always omit it.
     """
 
     seat: PlayerId
     policy_descriptor_id: str
     checkpoint_id: str | None
     agent_rng_version: str
+    decision_algorithm_kind: str | None = None
+    decision_algorithm_descriptor_id: str | None = None
+    decision_algorithm_determinization_count: int | None = None
 
     def __post_init__(self) -> None:
         _required_text(self.policy_descriptor_id, "policy descriptor ID")
         _required_text(self.agent_rng_version, "agent RNG version")
         if self.checkpoint_id is not None:
             _required_text(self.checkpoint_id, "checkpoint ID")
+        algorithm_fields = (
+            self.decision_algorithm_kind,
+            self.decision_algorithm_descriptor_id,
+            self.decision_algorithm_determinization_count,
+        )
+        if any(value is None for value in algorithm_fields) != all(
+            value is None for value in algorithm_fields
+        ):
+            raise ValueError(
+                "decision algorithm kind, descriptor ID, and determinization count "
+                "must be supplied together"
+            )
+        if self.decision_algorithm_kind is not None:
+            _required_text(self.decision_algorithm_kind, "decision algorithm kind")
+            assert self.decision_algorithm_descriptor_id is not None
+            assert self.decision_algorithm_determinization_count is not None
+            _digest(self.decision_algorithm_descriptor_id, "decision algorithm descriptor ID")
+            if (
+                isinstance(self.decision_algorithm_determinization_count, bool)
+                or not isinstance(self.decision_algorithm_determinization_count, int)
+                or self.decision_algorithm_determinization_count < 1
+            ):
+                raise ValueError("decision algorithm determinization count must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,8 +224,9 @@ class ExplorationProvenance:
 class DeterminizationProvenance:
     """Versioned hidden-state-sampling configuration used by an actor.
 
-    ``search_descriptor_id`` is absent from legacy payloads.  Milestone-4 producers include it
-    when sampled search can make any decision in the episode.
+    ``search_descriptor_id`` is the legacy schema-v1 global minimax identity. Schema v2 omits it
+    and records each seat's algorithm kind, descriptor, and determinization count instead; generic
+    producers set the global ``count`` to zero rather than collapsing mixed seat counts.
     """
 
     sampler_version: str
@@ -263,8 +296,20 @@ class CompactEpisode:
             raise ValueError(f"invalid compact episode ID {self.episode_id!r}")
         if self.format != COMPACT_REPLAY_FORMAT:
             raise ValueError(f"unsupported compact replay format {self.format!r}")
-        if self.schema_version != COMPACT_REPLAY_SCHEMA_VERSION:
+        if self.schema_version not in SUPPORTED_COMPACT_REPLAY_SCHEMA_VERSIONS:
             raise ValueError(f"unsupported compact replay schema version {self.schema_version}")
+        has_generic_seat = any(
+            item.decision_algorithm_kind is not None for item in self.provenance.seat_mapping
+        )
+        if self.schema_version == LEGACY_COMPACT_REPLAY_SCHEMA_VERSION and has_generic_seat:
+            raise ValueError("compact replay schema v1 cannot contain generic per-seat algorithms")
+        if (
+            self.schema_version == GENERIC_COMPACT_REPLAY_SCHEMA_VERSION
+            and self.provenance.determinization.search_descriptor_id is not None
+        ):
+            raise ValueError(
+                "compact replay schema v2 cannot use the legacy global search descriptor field"
+            )
         if self.transition_count != len(self.actions):
             raise ValueError("compact episode transition count does not match actions")
         if self.setup.card_data_fingerprint != self.card_data_fingerprint:
@@ -329,9 +374,13 @@ def compact_episode_payload(episode: CompactEpisode) -> JsonObject:
         "effects_fingerprint": episode.effects_fingerprint,
         "setup": cast(JsonValue, setup_payload(episode.setup)),
         "generation": episode.provenance.generation,
-        "seat_mapping": [_seat_payload(item) for item in episode.provenance.seat_mapping],
+        "seat_mapping": [
+            _seat_payload(item, episode.schema_version) for item in episode.provenance.seat_mapping
+        ],
         "exploration": _exploration_payload(episode.provenance.exploration),
-        "determinization": _determinization_payload(episode.provenance.determinization),
+        "determinization": _determinization_payload(
+            episode.provenance.determinization, episode.schema_version
+        ),
         "actions": [cast(JsonValue, action_payload(action)) for action in episode.actions],
         "transition_count": episode.transition_count,
         "terminal_result": cast(JsonValue, terminal_payload(episode.terminal_result)),
@@ -358,9 +407,14 @@ def compact_episode_from_payload(value: object) -> CompactEpisode:
 
     payload = _object(value, "compact_episode")
     _exact_keys(payload, _EPISODE_KEYS, "compact_episode")
+    schema_version = _integer(payload["schema_version"], "compact_episode.schema_version")
+    if schema_version not in SUPPORTED_COMPACT_REPLAY_SCHEMA_VERSIONS:
+        raise CompactReplaySchemaError(
+            f"unsupported compact replay schema version {schema_version}"
+        )
     try:
         seat_mapping = tuple(
-            _seat_from_payload(item, "compact_episode.seat_mapping[]")
+            _seat_from_payload(item, "compact_episode.seat_mapping[]", schema_version)
             for item in _array(payload["seat_mapping"], "compact_episode.seat_mapping")
         )
         if len(seat_mapping) != len(PlayerId):
@@ -373,7 +427,9 @@ def compact_episode_from_payload(value: object) -> CompactEpisode:
             generation=_integer(payload["generation"], "compact_episode.generation"),
             seat_mapping=cast(tuple[SeatPolicyProvenance, SeatPolicyProvenance], seat_mapping),
             exploration=_exploration_from_payload(payload["exploration"]),
-            determinization=_determinization_from_payload(payload["determinization"]),
+            determinization=_determinization_from_payload(
+                payload["determinization"], schema_version
+            ),
         )
         return CompactEpisode(
             episode_id=_string(payload["episode_id"], "compact_episode.episode_id"),
@@ -402,7 +458,7 @@ def compact_episode_from_payload(value: object) -> CompactEpisode:
                 payload["final_state_hash"], "compact_episode.final_state_hash"
             ),
             format=_string(payload["format"], "compact_episode.format"),
-            schema_version=_integer(payload["schema_version"], "compact_episode.schema_version"),
+            schema_version=schema_version,
             state_schema_version=_integer(
                 payload["state_schema_version"], "compact_episode.state_schema_version"
             ),
@@ -482,9 +538,13 @@ def check_compact_episode_compatibility(
     """Reject versions, fingerprints, and setup conventions unsupported by this engine."""
 
     registry = registry or load_card_registry()
+    if episode.schema_version not in SUPPORTED_COMPACT_REPLAY_SCHEMA_VERSIONS:
+        raise CompactReplayCompatibilityError(
+            f"incompatible compact replay schema: episode has {episode.schema_version!r}, "
+            f"engine supports {sorted(SUPPORTED_COMPACT_REPLAY_SCHEMA_VERSIONS)!r}"
+        )
     expected: tuple[tuple[str, object, object], ...] = (
         ("format", episode.format, COMPACT_REPLAY_FORMAT),
-        ("compact replay schema", episode.schema_version, COMPACT_REPLAY_SCHEMA_VERSION),
         ("engine", episode.engine_version, ENGINE_VERSION),
         ("rules", episode.rules_version, RULES_VERSION),
         ("state schema", episode.state_schema_version, STATE_SCHEMA_VERSION),
@@ -645,6 +705,13 @@ class CompactReplayRecorder:
         terminal = self._state.terminal_result
         if terminal is None:  # pragma: no cover - adapter contract defense
             raise CompactReplayRecordingError("terminal recorder state lacks a terminal result")
+        schema_version = (
+            GENERIC_COMPACT_REPLAY_SCHEMA_VERSION
+            if any(
+                item.decision_algorithm_kind is not None for item in self._provenance.seat_mapping
+            )
+            else LEGACY_COMPACT_REPLAY_SCHEMA_VERSION
+        )
         return CompactEpisode(
             episode_id=self._episode_id,
             engine_version=ENGINE_VERSION,
@@ -658,6 +725,7 @@ class CompactReplayRecorder:
             transition_count=len(self._actions),
             terminal_result=terminal,
             final_state_hash=state_hash(self._state),
+            schema_version=schema_version,
         )
 
     compact_episode = episode
@@ -779,21 +847,65 @@ def read_compact_replay_shard(
     return episodes
 
 
-def _seat_payload(value: SeatPolicyProvenance) -> dict[str, JsonValue]:
-    return {
+def _seat_payload(
+    value: SeatPolicyProvenance,
+    schema_version: int,
+) -> dict[str, JsonValue]:
+    payload: dict[str, JsonValue] = {
         "seat": value.seat.value,
         "policy_descriptor_id": value.policy_descriptor_id,
         "checkpoint_id": value.checkpoint_id,
         "agent_rng_version": value.agent_rng_version,
     }
-
-
-def _seat_from_payload(value: JsonValue, path: str) -> SeatPolicyProvenance:
-    payload = _object(value, path)
-    _exact_keys(
-        payload, {"seat", "policy_descriptor_id", "checkpoint_id", "agent_rng_version"}, path
+    if schema_version == LEGACY_COMPACT_REPLAY_SCHEMA_VERSION:
+        if value.decision_algorithm_kind is not None:
+            raise CompactReplaySchemaError(
+                "compact replay schema v1 cannot encode generic per-seat algorithms"
+            )
+        return payload
+    if schema_version != GENERIC_COMPACT_REPLAY_SCHEMA_VERSION:
+        raise CompactReplaySchemaError(f"unsupported compact replay schema {schema_version}")
+    payload.update(
+        {
+            "decision_algorithm_kind": value.decision_algorithm_kind,
+            "decision_algorithm_descriptor_id": value.decision_algorithm_descriptor_id,
+            "decision_algorithm_determinization_count": (
+                value.decision_algorithm_determinization_count
+            ),
+        }
     )
+    return payload
+
+
+def _seat_from_payload(
+    value: JsonValue,
+    path: str,
+    schema_version: int,
+) -> SeatPolicyProvenance:
+    payload = _object(value, path)
+    legacy_keys = {"seat", "policy_descriptor_id", "checkpoint_id", "agent_rng_version"}
+    generic_keys = legacy_keys | {
+        "decision_algorithm_kind",
+        "decision_algorithm_descriptor_id",
+        "decision_algorithm_determinization_count",
+    }
+    expected = (
+        legacy_keys if schema_version == LEGACY_COMPACT_REPLAY_SCHEMA_VERSION else generic_keys
+    )
+    _exact_keys(payload, expected, path)
     raw_checkpoint = payload["checkpoint_id"]
+    raw_kind = payload.get("decision_algorithm_kind")
+    raw_descriptor_id = payload.get("decision_algorithm_descriptor_id")
+    raw_count = payload.get("decision_algorithm_determinization_count")
+    if schema_version == GENERIC_COMPACT_REPLAY_SCHEMA_VERSION:
+        all_null = raw_kind is None and raw_descriptor_id is None and raw_count is None
+        all_present = (
+            raw_kind is not None and raw_descriptor_id is not None and raw_count is not None
+        )
+        if not (all_null or all_present):
+            raise CompactReplaySchemaError(
+                f"{path} generic decision-algorithm fields must be all null or all populated"
+            )
     return SeatPolicyProvenance(
         seat=_player_id(payload["seat"], f"{path}.seat"),
         policy_descriptor_id=_string(
@@ -803,6 +915,19 @@ def _seat_from_payload(value: JsonValue, path: str) -> SeatPolicyProvenance:
             None if raw_checkpoint is None else _string(raw_checkpoint, f"{path}.checkpoint_id")
         ),
         agent_rng_version=_string(payload["agent_rng_version"], f"{path}.agent_rng_version"),
+        decision_algorithm_kind=(
+            None if raw_kind is None else _string(raw_kind, f"{path}.decision_algorithm_kind")
+        ),
+        decision_algorithm_descriptor_id=(
+            None
+            if raw_descriptor_id is None
+            else _string(raw_descriptor_id, f"{path}.decision_algorithm_descriptor_id")
+        ),
+        decision_algorithm_determinization_count=(
+            None
+            if raw_count is None
+            else _integer(raw_count, f"{path}.decision_algorithm_determinization_count")
+        ),
     )
 
 
@@ -828,7 +953,10 @@ def _exploration_from_payload(value: JsonValue) -> ExplorationProvenance:
     )
 
 
-def _determinization_payload(value: DeterminizationProvenance) -> dict[str, JsonValue]:
+def _determinization_payload(
+    value: DeterminizationProvenance,
+    schema_version: int,
+) -> dict[str, JsonValue]:
     payload: dict[str, JsonValue] = {
         "sampler_version": value.sampler_version,
         "rng_version": value.rng_version,
@@ -836,20 +964,36 @@ def _determinization_payload(value: DeterminizationProvenance) -> dict[str, Json
         "failure_policy_id": value.failure_policy_id,
         "strict": value.strict,
     }
-    if value.search_descriptor_id is not None:
-        payload["search_descriptor_id"] = value.search_descriptor_id
+    if schema_version == LEGACY_COMPACT_REPLAY_SCHEMA_VERSION:
+        if value.search_descriptor_id is not None:
+            payload["search_descriptor_id"] = value.search_descriptor_id
+    elif schema_version == GENERIC_COMPACT_REPLAY_SCHEMA_VERSION:
+        if value.search_descriptor_id is not None:
+            raise CompactReplaySchemaError(
+                "compact replay schema v2 cannot encode legacy global search identity"
+            )
+    else:
+        raise CompactReplaySchemaError(f"unsupported compact replay schema {schema_version}")
     return payload
 
 
-def _determinization_from_payload(value: JsonValue) -> DeterminizationProvenance:
+def _determinization_from_payload(
+    value: JsonValue,
+    schema_version: int,
+) -> DeterminizationProvenance:
     payload = _object(value, "compact_episode.determinization")
     legacy_keys = {"sampler_version", "rng_version", "count", "failure_policy_id", "strict"}
-    allowed_keys = {
-        frozenset(legacy_keys),
-        frozenset(legacy_keys | {"search_descriptor_id"}),
-    }
-    if set(payload) not in allowed_keys:
+    if schema_version == LEGACY_COMPACT_REPLAY_SCHEMA_VERSION:
+        allowed_keys = {
+            frozenset(legacy_keys),
+            frozenset(legacy_keys | {"search_descriptor_id"}),
+        }
+        if set(payload) not in allowed_keys:
+            _exact_keys(payload, legacy_keys, "compact_episode.determinization")
+    elif schema_version == GENERIC_COMPACT_REPLAY_SCHEMA_VERSION:
         _exact_keys(payload, legacy_keys, "compact_episode.determinization")
+    else:
+        raise CompactReplaySchemaError(f"unsupported compact replay schema {schema_version}")
     raw_failure_policy = payload["failure_policy_id"]
     search_descriptor_id = (
         _string(

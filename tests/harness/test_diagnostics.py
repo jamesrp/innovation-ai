@@ -28,7 +28,7 @@ from innovation_ai.harness.diagnostics import (
     write_diagnostic_trace,
 )
 from innovation_ai.harness.policy import PolicySelection
-from innovation_ai.harness.policy_scheduler import PolicyDecisionAudit
+from innovation_ai.harness.policy_scheduler import PolicyDecisionAudit, SearchFailure
 from innovation_ai.harness.runner import Submission
 from innovation_ai.innovation.actions import Decision, DogmaAction, DrawAction, SemanticAction
 from innovation_ai.innovation.protocol import apply_action, current_decision
@@ -49,11 +49,22 @@ from innovation_ai.innovation.types import (
     SplayDirection,
 )
 from innovation_ai.search.contracts import (
+    RolloutFailureTrace,
+    RolloutLeafTelemetry,
+    RolloutPathStep,
+    RolloutRootSelectionTelemetry,
+    RolloutRouteTelemetry,
+    RolloutSearchDescriptor,
     RootSelectionTelemetry,
     SearchDescriptor,
     SearchRouteTelemetry,
 )
 from innovation_ai.search.minimax import MinimaxSelection, SearchStatistics, action_key
+from innovation_ai.search.rollout import (
+    RolloutSafetyCeilingError,
+    RolloutSelection,
+    RolloutStatistics,
+)
 
 _DIGEST = "sha256:" + "1" * 64
 _VERSIONS = {
@@ -260,6 +271,130 @@ def test_search_audit_retains_root_route_and_statistics_telemetry() -> None:
     statistics_payload = step.search["statistics"]
     assert isinstance(statistics_payload, dict)
     assert statistics_payload["nodes"] == 7
+
+
+def test_rollout_search_audit_uses_rollout_fields_without_minimax_labels(tmp_path: Path) -> None:
+    state = _playing_state(405)
+    decision = current_decision(state)
+    assert decision is not None
+    action = decision.legal_actions[0]
+    descriptor = RolloutSearchDescriptor(determinization_count=1)
+    action_keys = tuple(action_key(item) for item in decision.legal_actions)
+    routes = tuple(
+        RolloutRouteTelemetry(
+            root_action_index=index,
+            determinization_index=0,
+            root_action_key=key,
+            leaf=RolloutLeafTelemetry(0.5),
+            root_engine_transitions=1,
+            setup_response_engine_transitions=0,
+            continuation_engine_transitions=0,
+            completed_turn_count=0,
+        )
+        for index, key in enumerate(action_keys)
+    )
+    telemetry = RolloutRootSelectionTelemetry(
+        rollout_descriptor_id=descriptor.descriptor_id,
+        continuation_agent_descriptor_id=descriptor.continuation_agent_descriptor_id,
+        information_set_digest=_DIGEST,
+        sampler_seed_digest=_DIGEST,
+        determinization_count=1,
+        action_keys=action_keys,
+        action_mean_values=tuple(0.5 for _ in action_keys),
+        selected_action_index=0,
+        tied_action_indices=tuple(range(len(action_keys))),
+        routes=routes,
+    )
+    statistics = RolloutStatistics(
+        routes=len(routes),
+        root_engine_transitions=len(routes),
+        setup_response_engine_transitions=0,
+        continuation_engine_transitions=0,
+        completed_turn_routes=0,
+        terminal_routes=0,
+        maximum_route_transitions=1,
+    )
+    audit = PolicyDecisionAudit(
+        Submission("game-001", action),
+        decision.chooser,
+        None,
+        "search",
+        search_selection=RolloutSelection(action, telemetry, statistics),
+    )
+    recorder = PrivateDiagnosticTraceRecorder(_header(state), state)
+    recorder.record_step(apply_action(state, action).state, decision, audit)
+    trace = recorder.finish("action-ceiling", failure=RuntimeError("fixture"))
+    path = tmp_path / "rollout.jsonl.gz"
+
+    write_diagnostic_trace(path, trace)
+    restored = read_diagnostic_trace(path)
+    redacted = redacted_diagnostic_summary(restored)
+    steps = redacted["steps"]
+    assert isinstance(steps, list)
+    first = steps[0]
+    assert isinstance(first, dict)
+    search = first["search_aggregates"]
+
+    assert isinstance(search, dict)
+    assert search["descriptor_kind"] == "rollout-search"
+    assert search["continuation_engine_transitions"] == 0
+    assert "nodes" not in search
+
+
+def test_search_failure_preserves_nested_rollout_failure_trace_in_private_footer(
+    tmp_path: Path,
+) -> None:
+    state = _playing_state(406)
+    descriptor = RolloutSearchDescriptor(determinization_count=1)
+    route = RolloutRouteTelemetry(
+        root_action_index=0,
+        determinization_index=0,
+        root_action_key="private-root-action",
+        leaf=None,
+        root_engine_transitions=1,
+        setup_response_engine_transitions=0,
+        continuation_engine_transitions=1,
+        completed_turn_count=0,
+        rollout_path=(RolloutPathStep("private-continuation-action", "player-1", "effect-choice"),),
+        safety_ceiling_hit=True,
+    )
+    rollout_trace = RolloutFailureTrace(
+        descriptor.descriptor_id,
+        descriptor.continuation_agent_descriptor_id,
+        _DIGEST,
+        route,
+        "route-transition-ceiling",
+    )
+    failure = SearchFailure(
+        "game-001",
+        99,
+        RolloutSafetyCeilingError(rollout_trace),
+    )
+    trace = PrivateDiagnosticTraceRecorder(_header(state), state).finish(
+        "search-failure",
+        failure=failure,
+    )
+    path = tmp_path / "rollout-failure.private.jsonl.gz"
+
+    write_diagnostic_trace(path, trace)
+    restored = read_diagnostic_trace(path)
+    private_failure = restored.footer.failure
+    assert private_failure is not None
+    cause = private_failure["cause"]
+    assert isinstance(cause, dict)
+    nested = cause["rollout_failure_trace"]
+    assert isinstance(nested, dict)
+    assert nested == rollout_trace.payload()
+    route_payload = nested["route"]
+    assert isinstance(route_payload, dict)
+    path_payload = route_payload["rollout_path"]
+    assert isinstance(path_payload, list)
+    first_path_step = path_payload[0]
+    assert isinstance(first_path_step, dict)
+    assert first_path_step["action_key"] == "private-continuation-action"
+    redacted_footer = redacted_diagnostic_summary(restored)["footer"]
+    assert isinstance(redacted_footer, dict)
+    assert "failure" not in redacted_footer
 
 
 def test_no_progress_telemetry_detects_noop_dogma_and_zone_changes() -> None:

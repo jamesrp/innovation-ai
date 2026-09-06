@@ -16,6 +16,7 @@ from innovation_ai.agents import (
 )
 from innovation_ai.agents.descriptors import (
     SAMPLED_MINIMAX_AGENT_DESCRIPTOR,
+    SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR,
     SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
 )
 from innovation_ai.innovation.actions import (
@@ -33,7 +34,10 @@ from innovation_ai.innovation.catalog import load_card_registry
 from innovation_ai.innovation.protocol import apply_action, current_decision
 from innovation_ai.innovation.state import build_setup_state
 from innovation_ai.innovation.types import CardId, NormalAchievementId
-from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR
+from innovation_ai.search.contracts import (
+    EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
+    PRODUCTION_SEARCH_DESCRIPTOR,
+)
 
 
 def test_sampled_minimax_descriptor_references_production_search_identity() -> None:
@@ -43,6 +47,17 @@ def test_sampled_minimax_descriptor_references_production_search_identity() -> N
     )
     assert tuple(key for key, _ in SAMPLED_MINIMAX_AGENT_DESCRIPTOR.parameters) == tuple(
         sorted(key for key, _ in SAMPLED_MINIMAX_AGENT_DESCRIPTOR.parameters)
+    )
+
+
+def test_sampled_turn_rollout_descriptor_references_experimental_search_identity() -> None:
+    assert SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.name == "sampled-turn-rollout-heuristic"
+    assert SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.version == "v1"
+    assert SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.parameters == (
+        ("search_descriptor_id", EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id),
+    )
+    assert SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.descriptor_id.startswith(
+        "sampled-turn-rollout-heuristic-v1-"
     )
 
 

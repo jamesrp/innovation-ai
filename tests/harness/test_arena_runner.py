@@ -6,6 +6,11 @@ from typing import Any
 
 import pytest
 
+from innovation_ai.agents.descriptors import (
+    SAMPLED_MINIMAX_AGENT_DESCRIPTOR,
+    SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR,
+    AgentDescriptor,
+)
 from innovation_ai.harness.arena import (
     ArenaGameResult,
     ArenaManifest,
@@ -36,8 +41,33 @@ from innovation_ai.harness.diagnostics import read_diagnostic_trace
 from innovation_ai.harness.engine import InnovationEngineAdapter
 from innovation_ai.innovation.state import TerminalReason, TerminalResult
 from innovation_ai.innovation.types import PlayerId
-from innovation_ai.search import SearchDescriptor
-from innovation_ai.training.checkpoint import PolicyDescriptor as TrainingPolicyDescriptor
+from innovation_ai.search import (
+    MINIMAX_SEARCH_DESCRIPTOR_KIND,
+    ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+    RolloutSearchDescriptor,
+    SearchDescriptor,
+)
+from innovation_ai.training.checkpoint import (
+    DEFAULT_ROLLOUT_FALLBACK_AGENT,
+    DEFAULT_SEARCH_CONTINUATION_POLICY,
+    MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+)
+from innovation_ai.training.checkpoint import (
+    PolicyDescriptor as TrainingPolicyDescriptor,
+)
+
+
+def _canonical_search_policy_id(descriptor: SearchDescriptor | RolloutSearchDescriptor) -> str:
+    family = (
+        SAMPLED_MINIMAX_AGENT_DESCRIPTOR
+        if isinstance(descriptor, SearchDescriptor)
+        else SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR
+    )
+    return AgentDescriptor(
+        family.name,
+        family.version,
+        (("search_descriptor_id", descriptor.descriptor_id),),
+    ).descriptor_id
 
 
 def _baseline_manifest() -> ArenaManifest:
@@ -176,20 +206,21 @@ def _tiny_search_descriptor() -> SearchDescriptor:
 
 def test_search_heuristic_runs_every_decision_through_scheduler_and_aggregates_telemetry() -> None:
     search = _tiny_search_descriptor()
+    search_policy_id = _canonical_search_policy_id(search)
     manifest = ArenaManifest(
         "search-execution",
-        "search",
+        search_policy_id,
         PolicyPool("simple-only", (PoolEntry("simple", 1),)),
-        (plan_match_pair("search-seed-808", 808, "search", "simple"),),
+        (plan_match_pair("search-seed-808", 808, search_policy_id, "simple"),),
         BootstrapConfig(seed=7, resamples=3),
     )
     execution = ArenaRunner(
         InnovationEngineAdapter(),
         {
-            "search": PolicyDescriptor("search", "search-heuristic"),
+            search_policy_id: PolicyDescriptor(search_policy_id, "search-heuristic"),
             "simple": PolicyDescriptor("simple", "simple-heuristic"),
         },
-        search_policy_descriptors={"search": search},
+        search_policy_descriptors={search_policy_id: search},
         search_descriptors={search.descriptor_id: search},
     ).execute(manifest)
 
@@ -219,6 +250,124 @@ def test_search_policy_requires_registered_content_derived_descriptor_identity()
             policy,
             search_policy_descriptors={"search": search},
         )
+    with pytest.raises(ArenaExecutionError, match="not the canonical"):
+        ArenaRunner(
+            InnovationEngineAdapter(),
+            policy,
+            search_policy_descriptors={"search": search},
+            search_descriptors={search.descriptor_id: search},
+        )
+
+    canonical_id = _canonical_search_policy_id(search)
+    with pytest.raises(ArenaExecutionError, match="cannot reference a learned checkpoint"):
+        ArenaRunner(
+            InnovationEngineAdapter(),
+            {
+                canonical_id: PolicyDescriptor(
+                    canonical_id,
+                    "search-heuristic",
+                    "not-a-baseline-checkpoint",
+                )
+            },
+            search_policy_descriptors={canonical_id: search},
+            search_descriptors={search.descriptor_id: search},
+        )
+
+
+def test_arena_accepts_rollout_descriptors_and_rejects_algorithm_family_mismatches(
+    tmp_path: Path,
+) -> None:
+    rollout = RolloutSearchDescriptor(determinization_count=1)
+    rollout_policy_id = _canonical_search_policy_id(rollout)
+    policy = {rollout_policy_id: PolicyDescriptor(rollout_policy_id, "search-heuristic")}
+
+    runner = ArenaRunner(
+        InnovationEngineAdapter(),
+        policy,
+        search_policy_descriptors={rollout_policy_id: rollout},
+        search_descriptors={rollout.descriptor_id: rollout},
+    )
+    assert runner._search_policy_descriptors[rollout_policy_id] == rollout
+
+    manifest = ArenaManifest(
+        "rollout-routing",
+        rollout_policy_id,
+        PolicyPool("simple-only", (PoolEntry("simple", 1),)),
+        (plan_match_pair("rollout-routing-pair", 812, rollout_policy_id, "simple"),),
+        BootstrapConfig(seed=7, resamples=1),
+    )
+    traced_runner = ArenaRunner(
+        InnovationEngineAdapter(),
+        {
+            rollout_policy_id: PolicyDescriptor(rollout_policy_id, "search-heuristic"),
+            "simple": PolicyDescriptor("simple", "simple-heuristic"),
+        },
+        search_policy_descriptors={rollout_policy_id: rollout},
+        search_descriptors={rollout.descriptor_id: rollout},
+        max_actions=1,
+        trace_configuration=ArenaTraceConfiguration(tmp_path, "revision-rollout"),
+    )
+    with pytest.raises(ArenaActionLimitError):
+        traced_runner.execute(manifest)
+    trace = read_diagnostic_trace(
+        tmp_path / f"{manifest.match_pairs[0].games[0].game_id}.private.jsonl.gz"
+    )
+    rollout_steps = [step for step in trace.steps if step.search is not None]
+    assert rollout_steps
+    search_payload = rollout_steps[0].search
+    assert search_payload is not None
+    telemetry = search_payload["telemetry"]
+    assert isinstance(telemetry, dict)
+    assert telemetry["rollout_descriptor_id"] == rollout.descriptor_id
+    assert "search_descriptor_id" not in telemetry
+
+    with pytest.raises(ArenaExecutionError, match="algorithm is unsupported"):
+        invalid = RolloutSearchDescriptor(algorithm="root-sampled-minimax-one-completed-turn-v1")
+        ArenaRunner(
+            InnovationEngineAdapter(),
+            policy,
+            search_policy_descriptors={rollout_policy_id: invalid},
+            search_descriptors={invalid.descriptor_id: invalid},
+        )
+
+    learned = TrainingPolicyDescriptor(
+        checkpoint_id="rollout-checkpoint",
+        encoder_layout_fingerprint="fixture-encoder",
+        card_data_fingerprint="fixture-cards",
+        effects_fingerprint="fixture-effects",
+        determinization_count=rollout.determinization_count,
+        fallback_agent=DEFAULT_ROLLOUT_FALLBACK_AGENT,
+        fallback_algorithm_kind=ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+        fallback_algorithm_descriptor_id=rollout.descriptor_id,
+        hypothetical_continuation_policy=rollout.continuation_agent_descriptor_id,
+    )
+
+    class _Cache:
+        def evaluator_for(self, descriptor: TrainingPolicyDescriptor) -> object:
+            del descriptor
+            return object()
+
+    learned_policy = {"learned": PolicyDescriptor("learned", "learned", "rollout-checkpoint")}
+    ArenaRunner(
+        InnovationEngineAdapter(),
+        learned_policy,
+        learned_policies={"learned": learned},
+        evaluator_cache=_Cache(),  # type: ignore[arg-type]
+        search_descriptors={rollout.descriptor_id: rollout},
+    )
+    confused = replace(
+        learned,
+        fallback_algorithm_kind=MINIMAX_SEARCH_DESCRIPTOR_KIND,
+        fallback_agent="sampled-minimax-heuristic",
+    )
+    with pytest.raises(ArenaExecutionError, match="fallback algorithm kind is incompatible"):
+        ArenaRunner(
+            InnovationEngineAdapter(),
+            learned_policy,
+            learned_policies={"learned": confused},
+            evaluator_cache=_Cache(),  # type: ignore[arg-type]
+            search_descriptors={rollout.descriptor_id: rollout},
+        )
 
 
 def test_learned_v2_setup_fallback_receives_arena_search_descriptor(
@@ -233,6 +382,11 @@ def test_learned_v2_setup_fallback_receives_arena_search_descriptor(
         card_data_fingerprint="fixture-cards",
         effects_fingerprint="fixture-effects",
         search_descriptor_id=search.descriptor_id,
+        search_continuation_policy=DEFAULT_SEARCH_CONTINUATION_POLICY,
+        fallback_algorithm_kind=None,
+        fallback_algorithm_descriptor_id=None,
+        hypothetical_continuation_policy=None,
+        schema_version=MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
     )
 
     class _UnusedEvaluator:

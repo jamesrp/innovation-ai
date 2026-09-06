@@ -95,6 +95,85 @@ def _baseline(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rollout_feasibility(args: argparse.Namespace) -> int:
+    """Run the frozen R4 reference benchmark and optionally its remaining measured gates."""
+
+    from innovation_ai.search.rollout_benchmark import (
+        run_rollout_feasibility,
+        write_public_redacted_rollout_feasibility_json,
+        write_public_redacted_rollout_feasibility_markdown,
+        write_trusted_private_rollout_feasibility_json,
+        write_trusted_private_rollout_feasibility_markdown,
+    )
+    from innovation_ai.search.rollout_validation import (
+        run_rollout_arena_smoke,
+        run_rollout_generation_smoke,
+        run_rollout_route_length_soak,
+        write_rollout_validation_json,
+    )
+
+    if args.measure_remaining_gates and args.output.exists() and any(args.output.iterdir()):
+        raise ValueError("full rollout feasibility measurement requires a fresh output directory")
+    args.output.mkdir(parents=True, exist_ok=True)
+    soak = None
+    generation_smoke = None
+    arena_smoke = None
+    if args.measure_remaining_gates:
+        soak = run_rollout_route_length_soak()
+        write_rollout_validation_json(
+            soak,
+            args.output / "route-length-soak-private.json",
+        )
+        write_rollout_validation_json(
+            soak,
+            args.output / "route-length-soak-public.json",
+            public=True,
+        )
+        generation_smoke = run_rollout_generation_smoke(args.output / "generation-smoke")
+        write_rollout_validation_json(
+            generation_smoke,
+            args.output / "generation-smoke-private.json",
+        )
+        write_rollout_validation_json(
+            generation_smoke,
+            args.output / "generation-smoke-public.json",
+            public=True,
+        )
+        arena_smoke = run_rollout_arena_smoke(args.output / "arena-smoke")
+        write_rollout_validation_json(
+            arena_smoke,
+            args.output / "arena-smoke-private.json",
+        )
+        write_rollout_validation_json(
+            arena_smoke,
+            args.output / "arena-smoke-public.json",
+            public=True,
+        )
+    result = run_rollout_feasibility(
+        route_length_soak=soak,
+        generation_smoke=generation_smoke,
+        arena_smoke=arena_smoke,
+    )
+    write_trusted_private_rollout_feasibility_json(
+        result,
+        args.output / "rollout-feasibility-private.json",
+    )
+    write_public_redacted_rollout_feasibility_json(
+        result,
+        args.output / "rollout-feasibility-public.json",
+    )
+    write_trusted_private_rollout_feasibility_markdown(
+        result,
+        args.output / "rollout-feasibility-private.md",
+    )
+    write_public_redacted_rollout_feasibility_markdown(
+        result,
+        args.output / "rollout-feasibility-public.md",
+    )
+    print(result.to_public_redacted_markdown(), end="")
+    return 0 if not args.measure_remaining_gates or result.gates.passed else 1
+
+
 def _baseline_seat_policy(name: str) -> Any:
     from innovation_ai.agents.descriptors import (
         RANDOM_AGENT_DESCRIPTOR,
@@ -1105,6 +1184,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--validation", nargs="+", default=("full", "cheap"), choices=("full", "cheap", "off")
     )
 
+    rollout_feasibility = subparsers.add_parser(
+        "rollout-feasibility",
+        help="run the frozen deterministic-rollout R4 feasibility protocol",
+    )
+    rollout_feasibility.add_argument("--output", type=Path, required=True)
+    rollout_feasibility.add_argument(
+        "--measure-remaining-gates",
+        action="store_true",
+        help="also run the seeded/all-card soak and generation/arena throughput smokes",
+    )
+
     self_play = subparsers.add_parser("self-play", help="generate compact replay self-play")
     self_play.add_argument("--run-dir", type=Path, required=True)
     self_play.add_argument("--games", type=int, required=True)
@@ -1218,6 +1308,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _replay(args.log)
         if args.command == "baseline":
             return _baseline(args)
+        if args.command == "rollout-feasibility":
+            return _rollout_feasibility(args)
         if args.command == "self-play":
             return _self_play(args)
         if args.command == "dataset" and args.dataset_command == "build":

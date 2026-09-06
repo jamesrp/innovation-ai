@@ -6,7 +6,10 @@ import json
 from dataclasses import dataclass
 from hashlib import sha256
 
-from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR
+from innovation_ai.search.contracts import (
+    EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
+    PRODUCTION_SEARCH_DESCRIPTOR,
+)
 
 type AgentParameter = str | int | bool | None
 AGENT_DESCRIPTOR_SCHEMA_VERSION = 1
@@ -75,3 +78,12 @@ SAMPLED_MINIMAX_AGENT_DESCRIPTOR = AgentDescriptor(
     version="v1",
     parameters=(("search_descriptor_id", PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id),),
 )
+SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR = AgentDescriptor(
+    name="sampled-turn-rollout-heuristic",
+    version="v1",
+    parameters=(("search_descriptor_id", EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id),),
+)
+# Descriptive aliases keep callers from having to guess whether the implementation-family name
+# includes "turn" or "heuristic" while preserving one canonical descriptor object.
+SAMPLED_ROLLOUT_AGENT_DESCRIPTOR = SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR
+SAMPLED_TURN_ROLLOUT_HEURISTIC_AGENT_DESCRIPTOR = SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR

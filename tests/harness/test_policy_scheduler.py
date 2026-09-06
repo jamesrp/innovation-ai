@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 
 from innovation_ai.agents import RandomAgent
+from innovation_ai.agents.descriptors import SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR
 from innovation_ai.harness import (
     GameSpec,
     InnovationEngineAdapter,
@@ -30,15 +31,30 @@ from innovation_ai.innovation.state import (
     build_explicit_state,
 )
 from innovation_ai.innovation.types import CardId, Color, PlayerId
-from innovation_ai.search import PRODUCTION_SEARCH_DESCRIPTOR, SearchDescriptor
+from innovation_ai.search import (
+    EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
+    PRODUCTION_SEARCH_DESCRIPTOR,
+    DeterministicSampledMinimax,
+    DeterministicSampledRollout,
+    MinimaxSelection,
+    RolloutSearchDescriptor,
+    RolloutSelection,
+    SearchDescriptor,
+    SearchRngFactory,
+    seed_digest,
+)
 from innovation_ai.search.information_sets import (
     InformationSetSampler as SearchInformationSetSampler,
 )
 from innovation_ai.search.information_sets import InformationSetSpec as SearchInformationSetSpec
 from innovation_ai.training.checkpoint import (
     DEFAULT_FALLBACK_AGENT_VERSION,
+    DEFAULT_ROLLOUT_FALLBACK_AGENT,
+    DEFAULT_SEARCH_CONTINUATION_POLICY,
     LEGACY_DEFAULT_FALLBACK_AGENT,
     LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+    MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+    POLICY_DESCRIPTOR_SCHEMA_VERSION,
     PolicyDescriptor,
 )
 from innovation_ai.training.determinizations import InformationSetSampler, SamplingExhausted
@@ -97,6 +113,9 @@ def _legacy_policy() -> PolicyDescriptor:
         search_descriptor_id=None,
         learned_turn_action_policy=None,
         search_continuation_policy=None,
+        fallback_algorithm_kind=None,
+        fallback_algorithm_descriptor_id=None,
+        hypothetical_continuation_policy=None,
         schema_version=LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION,
     )
 
@@ -109,6 +128,10 @@ def _search_descriptor(*, determinizations: int = 1) -> SearchDescriptor:
         determinization_count=determinizations,
         route_transition_budget=1,
     )
+
+
+def _rollout_descriptor(*, determinizations: int = 1) -> RolloutSearchDescriptor:
+    return RolloutSearchDescriptor(determinization_count=determinizations)
 
 
 def _policy(
@@ -129,6 +152,40 @@ def _policy(
             if search_descriptor_id is None
             else search_descriptor_id
         ),
+        search_continuation_policy=DEFAULT_SEARCH_CONTINUATION_POLICY,
+        fallback_algorithm_kind=None,
+        fallback_algorithm_descriptor_id=None,
+        hypothetical_continuation_policy=None,
+        schema_version=MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+    )
+
+
+def _v3_policy(
+    descriptor: SearchDescriptor | RolloutSearchDescriptor,
+    *,
+    hypothetical_continuation_policy: str | None = None,
+) -> PolicyDescriptor:
+    rollout = isinstance(descriptor, RolloutSearchDescriptor)
+    hypothetical_policy = (
+        descriptor.continuation_agent_descriptor_id
+        if isinstance(descriptor, RolloutSearchDescriptor)
+        else DEFAULT_SEARCH_CONTINUATION_POLICY
+    )
+    return PolicyDescriptor(
+        checkpoint_id="fixture-checkpoint",
+        encoder_layout_fingerprint="fixture-encoder",
+        card_data_fingerprint="fixture-cards",
+        effects_fingerprint="fixture-effects",
+        determinization_count=descriptor.determinization_count,
+        fallback_agent=(DEFAULT_ROLLOUT_FALLBACK_AGENT if rollout else "sampled-minimax-heuristic"),
+        fallback_algorithm_kind=descriptor.descriptor_kind,
+        fallback_algorithm_descriptor_id=descriptor.descriptor_id,
+        hypothetical_continuation_policy=(
+            hypothetical_continuation_policy
+            if hypothetical_continuation_policy is not None
+            else hypothetical_policy
+        ),
+        schema_version=POLICY_DESCRIPTOR_SCHEMA_VERSION,
     )
 
 
@@ -324,6 +381,82 @@ def test_v2_learned_routes_starting_and_effect_choices_through_search() -> None:
     assert effect.submissions[0].action in paused.decision.legal_actions
 
 
+def test_schema_v2_learned_policy_cannot_reinterpret_rollout_descriptor() -> None:
+    rollout = _rollout_descriptor()
+    learned = _policy(search_descriptor_id=rollout.descriptor_id)
+    runner = PullGameRunner(InnovationEngineAdapter(), (GameSpec("learned-rollout", 1203),))
+    scheduler = PolicyScheduler(
+        {"learned-rollout": LearnedPolicyAssignment(learned, "unused")},
+        {},
+        run_seed=11,
+        generation=2,
+        search_descriptors={rollout.descriptor_id: rollout},
+    )
+
+    with pytest.raises(SearchFailure, match="schema-v2 learned policy requires a minimax"):
+        scheduler.schedule(runner)
+
+
+def test_schema_v3_learned_fallback_dispatches_registered_minimax_and_rollout() -> None:
+    minimax = _search_descriptor()
+    rollout = _rollout_descriptor()
+    for game_id, descriptor, expected_type in (
+        ("learned-v3-minimax", minimax, MinimaxSelection),
+        ("learned-v3-rollout", rollout, RolloutSelection),
+    ):
+        learned = _v3_policy(descriptor)
+        runner = PullGameRunner(InnovationEngineAdapter(), (GameSpec(game_id, 1204),))
+        scheduler = PolicyScheduler(
+            {game_id: LearnedPolicyAssignment(learned, "unused")},
+            {},
+            run_seed=13,
+            generation=2,
+            search_descriptors={descriptor.descriptor_id: descriptor},
+            heuristic=_ExplodingAgent(),
+        )
+
+        schedule = scheduler.schedule(runner)
+
+        assert all(audit.handling == "learned-search-fallback" for audit in schedule.audits)
+        assert all(isinstance(selection, expected_type) for selection in schedule.search_selections)
+
+
+def test_schema_v3_learned_fallback_rejects_kind_and_hypothetical_policy_mismatches() -> None:
+    minimax = _search_descriptor()
+    rollout = _rollout_descriptor()
+    runner = PullGameRunner(InnovationEngineAdapter(), (GameSpec("v3-mismatch", 1205),))
+    wrong_kind = PolicyDescriptor(
+        checkpoint_id="fixture-checkpoint",
+        encoder_layout_fingerprint="fixture-encoder",
+        card_data_fingerprint="fixture-cards",
+        effects_fingerprint="fixture-effects",
+        fallback_agent=DEFAULT_ROLLOUT_FALLBACK_AGENT,
+        fallback_algorithm_kind=rollout.descriptor_kind,
+        fallback_algorithm_descriptor_id=minimax.descriptor_id,
+        hypothetical_continuation_policy=rollout.continuation_agent_descriptor_id,
+    )
+    scheduler = PolicyScheduler(
+        {"v3-mismatch": LearnedPolicyAssignment(wrong_kind, "unused")},
+        {},
+        run_seed=13,
+        generation=2,
+        search_descriptors={minimax.descriptor_id: minimax},
+    )
+    with pytest.raises(SearchFailure, match="algorithm kind differs"):
+        scheduler.schedule(runner)
+
+    wrong_policy = _v3_policy(rollout, hypothetical_continuation_policy="wrong-policy-v1")
+    scheduler = PolicyScheduler(
+        {"v3-mismatch": LearnedPolicyAssignment(wrong_policy, "unused")},
+        {},
+        run_seed=13,
+        generation=2,
+        search_descriptors={rollout.descriptor_id: rollout},
+    )
+    with pytest.raises(SearchFailure, match="hypothetical continuation policy differs"):
+        scheduler.schedule(runner)
+
+
 def test_explicit_search_assignment_controls_every_decision_kind_and_is_rebatch_invariant() -> None:
     descriptor = _search_descriptor()
     assignment = SearchPolicyAssignment("search-policy", descriptor)
@@ -363,6 +496,79 @@ def test_explicit_search_assignment_controls_every_decision_kind_and_is_rebatch_
     turn = scheduler.schedule(runner)
     assert all(audit.handling == "search" for audit in turn.audits)
     assert all(audit.search_selection is not None for audit in turn.audits)
+
+
+def test_explicit_rollout_assignment_uses_rollout_result_and_sampler_seed_telemetry() -> None:
+    descriptor = EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR
+    assignment = SearchPolicyAssignment(
+        SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.descriptor_id,
+        descriptor,
+    )
+    runner = PullGameRunner(InnovationEngineAdapter(), (GameSpec("rollout", 1409),))
+    scheduler = PolicyScheduler(
+        {},
+        {},
+        run_seed=19,
+        generation=3,
+        search_assignments={"rollout": assignment},
+        search_descriptors={descriptor.descriptor_id: descriptor},
+        heuristic=_ExplodingAgent(),
+    )
+
+    pending = runner.pending()
+    schedule = scheduler.schedule(runner)
+
+    assert all(audit.handling == "search" for audit in schedule.audits)
+    assert all(isinstance(selection, RolloutSelection) for selection in schedule.search_selections)
+    for request, selection in zip(pending, schedule.search_selections, strict=True):
+        assert isinstance(selection, RolloutSelection)
+        sampler_seed = SearchRngFactory(19, 3).seed_for_decision(
+            game_id=request.game_id,
+            chooser=request.decision.chooser,
+            decision_id=request.decision.decision_id,
+            policy_id=assignment.policy_id,
+            search_descriptor_id=descriptor.descriptor_id,
+        )
+        assert selection.telemetry.sampler_seed_digest == seed_digest(sampler_seed)
+        assert not hasattr(selection.telemetry, "selector_seed_digest")
+    assert isinstance(scheduler._searchers[descriptor.descriptor_id], DeterministicSampledRollout)
+
+
+def test_search_dispatch_is_strict_and_keeps_minimax_legacy_seed_telemetry() -> None:
+    minimax = _search_descriptor()
+    runner = PullGameRunner(InnovationEngineAdapter(), (GameSpec("minimax", 1411),))
+    scheduler = PolicyScheduler(
+        {},
+        {},
+        run_seed=23,
+        generation=4,
+        search_assignments={"minimax": SearchPolicyAssignment("minimax-policy", minimax)},
+    )
+
+    pending = runner.pending()
+    schedule = scheduler.schedule(runner)
+
+    for request, selection in zip(pending, schedule.search_selections, strict=True):
+        assert not isinstance(selection, RolloutSelection)
+        sampler_seed = SearchRngFactory(23, 4).seed_for_decision(
+            game_id=request.game_id,
+            chooser=request.decision.chooser,
+            decision_id=request.decision.decision_id,
+            policy_id="minimax-policy",
+            search_descriptor_id=minimax.descriptor_id,
+        )
+        assert selection.telemetry.selector_seed_digest == seed_digest(sampler_seed)
+    assert isinstance(scheduler._searchers[minimax.descriptor_id], DeterministicSampledMinimax)
+    with pytest.raises(ValueError, match="unsupported minimax search algorithm"):
+        SearchPolicyAssignment(
+            "wrong-minimax",
+            SearchDescriptor(search_version="root-sampled-deterministic-turn-rollout-v1"),
+        )
+    with pytest.raises(ValueError, match="unsupported rollout search algorithm"):
+        SearchPolicyAssignment(
+            "wrong-rollout",
+            RolloutSearchDescriptor(algorithm="root-sampled-minimax-one-completed-turn-v1"),
+        )
 
 
 def test_search_builder_receives_only_live_state_and_exact_decision_boundary() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -9,12 +10,22 @@ import pytest
 from innovation_ai.agents.descriptors import (
     RANDOM_AGENT_DESCRIPTOR,
     SAMPLED_MINIMAX_AGENT_DESCRIPTOR,
+    SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR,
     SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
     AgentDescriptor,
 )
 from innovation_ai.innovation.state import PUBLIC_COVERED_INFORMATION_POLICY_VERSION
-from innovation_ai.search.contracts import SearchDescriptor
-from innovation_ai.training.checkpoint import PolicyDescriptor
+from innovation_ai.search.contracts import (
+    ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+    RolloutSearchDescriptor,
+    SearchDescriptor,
+)
+from innovation_ai.training.checkpoint import (
+    DEFAULT_ROLLOUT_FALLBACK_AGENT,
+    DEFAULT_SEARCH_CONTINUATION_POLICY,
+    MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+    PolicyDescriptor,
+)
 from innovation_ai.training.compact_replay import (
     CompactReplayShardManifest,
     read_compact_replay_shard,
@@ -184,6 +195,168 @@ def test_search_baseline_generation_uses_supplied_descriptor_and_records_provena
     )
 
 
+def test_rollout_baseline_resolves_generic_per_seat_algorithm_provenance(
+    tmp_path: Path,
+) -> None:
+    rollout_descriptor = RolloutSearchDescriptor(determinization_count=1)
+    baseline_descriptor = AgentDescriptor(
+        SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.name,
+        SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.version,
+        (("search_descriptor_id", rollout_descriptor.descriptor_id),),
+    )
+    rollout = SeatPolicy(
+        baseline_descriptor.descriptor_id,
+        "baseline",
+        descriptor=baseline_descriptor,
+    )
+    random = _baseline_policies()[1]
+    manifest = plan_generation(
+        GenerationConfig("rollout-provenance", 1019, 0),
+        (rollout, random),
+        ((rollout.policy_id, random.policy_id),),
+        1,
+    )
+
+    import innovation_ai.training.self_play as self_play
+
+    provenance = self_play._provenance(
+        manifest,
+        manifest.assignments[0],
+        {rollout_descriptor.descriptor_id: rollout_descriptor},
+    )
+
+    rollout_seat = provenance.seat_mapping[0]
+    assert rollout_seat.decision_algorithm_kind == ROLLOUT_SEARCH_DESCRIPTOR_KIND
+    assert rollout_seat.decision_algorithm_descriptor_id == rollout_descriptor.descriptor_id
+    assert rollout_seat.decision_algorithm_determinization_count == 1
+    assert provenance.determinization.search_descriptor_id is None
+    assert provenance.determinization.count == 0
+    assert provenance.determinization.sampler_version == "per-seat-decision-algorithm-v2"
+
+    confused = AgentDescriptor(
+        SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.name,
+        SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.version,
+        (("search_descriptor_id", SearchDescriptor().descriptor_id),),
+    )
+    confused_policy = SeatPolicy(confused.descriptor_id, "baseline", descriptor=confused)
+    confused_manifest = plan_generation(
+        GenerationConfig("rollout-confused", 1020, 0),
+        (confused_policy, random),
+        ((confused_policy.policy_id, random.policy_id),),
+        1,
+    )
+    with pytest.raises(SelfPlayError, match="decision-algorithm kind differs"):
+        run_generation(tmp_path, confused_manifest, stop_requested=lambda: True)
+
+
+def test_mixed_algorithm_families_and_counts_remain_per_seat_without_global_collapse() -> None:
+    rollout_descriptor = RolloutSearchDescriptor(determinization_count=1)
+    minimax_descriptor = SearchDescriptor(determinization_count=4)
+    rollout_agent = AgentDescriptor(
+        SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.name,
+        SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.version,
+        (("search_descriptor_id", rollout_descriptor.descriptor_id),),
+    )
+    minimax_agent = AgentDescriptor(
+        SAMPLED_MINIMAX_AGENT_DESCRIPTOR.name,
+        SAMPLED_MINIMAX_AGENT_DESCRIPTOR.version,
+        (("search_descriptor_id", minimax_descriptor.descriptor_id),),
+    )
+    rollout = SeatPolicy(rollout_agent.descriptor_id, "baseline", descriptor=rollout_agent)
+    minimax = SeatPolicy(minimax_agent.descriptor_id, "baseline", descriptor=minimax_agent)
+    manifest = plan_generation(
+        GenerationConfig("mixed-search-provenance", 1023, 0),
+        (rollout, minimax),
+        ((rollout.policy_id, minimax.policy_id),),
+        1,
+    )
+
+    import innovation_ai.training.self_play as self_play
+
+    provenance = self_play._provenance(
+        manifest,
+        manifest.assignments[0],
+        {
+            rollout_descriptor.descriptor_id: rollout_descriptor,
+            minimax_descriptor.descriptor_id: minimax_descriptor,
+        },
+    )
+
+    first, second = provenance.seat_mapping
+    assert (first.decision_algorithm_kind, first.decision_algorithm_determinization_count) == (
+        ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+        1,
+    )
+    assert (second.decision_algorithm_kind, second.decision_algorithm_determinization_count) == (
+        "minimax-search",
+        4,
+    )
+    assert first.decision_algorithm_descriptor_id == rollout_descriptor.descriptor_id
+    assert second.decision_algorithm_descriptor_id == minimax_descriptor.descriptor_id
+    assert provenance.determinization.search_descriptor_id is None
+    assert provenance.determinization.count == 0
+
+
+def test_v3_learned_rollout_resolves_and_validates_generic_provenance(tmp_path: Path) -> None:
+    rollout_descriptor = RolloutSearchDescriptor(determinization_count=1)
+    learned_descriptor = PolicyDescriptor(
+        checkpoint_id="rollout-checkpoint",
+        encoder_layout_fingerprint="fixture-encoder",
+        card_data_fingerprint="fixture-cards",
+        effects_fingerprint="fixture-effects",
+        fallback_agent=DEFAULT_ROLLOUT_FALLBACK_AGENT,
+        fallback_algorithm_kind=ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+        fallback_algorithm_descriptor_id=rollout_descriptor.descriptor_id,
+        hypothetical_continuation_policy=rollout_descriptor.continuation_agent_descriptor_id,
+    )
+    learned = SeatPolicy(
+        learned_descriptor.policy_id,
+        "learned",
+        learned=learned_descriptor,
+    )
+    random = _baseline_policies()[1]
+    manifest = plan_generation(
+        GenerationConfig("learned-rollout", 1021, 0),
+        (learned, random),
+        ((learned.policy_id, random.policy_id),),
+        1,
+    )
+
+    import innovation_ai.training.self_play as self_play
+
+    provenance = self_play._provenance(
+        manifest,
+        manifest.assignments[0],
+        {rollout_descriptor.descriptor_id: rollout_descriptor},
+    )
+    learned_seat = provenance.seat_mapping[0]
+    assert learned_seat.decision_algorithm_kind == ROLLOUT_SEARCH_DESCRIPTOR_KIND
+    assert learned_seat.decision_algorithm_descriptor_id == rollout_descriptor.descriptor_id
+    assert learned_seat.decision_algorithm_determinization_count == 1
+    assert provenance.determinization.search_descriptor_id is None
+    assert provenance.determinization.count == 0
+
+    mismatched = replace(
+        learned_descriptor,
+        hypothetical_continuation_policy="wrong-continuation-v1",
+    )
+    mismatched_seat = SeatPolicy(mismatched.policy_id, "learned", learned=mismatched)
+    mismatched_manifest = plan_generation(
+        GenerationConfig("learned-rollout-mismatch", 1022, 0),
+        (mismatched_seat, random),
+        ((mismatched_seat.policy_id, random.policy_id),),
+        1,
+    )
+    with pytest.raises(SelfPlayError, match="hypothetical continuation differs"):
+        run_generation(
+            tmp_path,
+            mismatched_manifest,
+            checkpoint_root=tmp_path / "checkpoints",
+            stop_requested=lambda: True,
+            search_descriptors={rollout_descriptor.descriptor_id: rollout_descriptor},
+        )
+
+
 def test_v2_learned_generation_routes_search_fallback_with_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -201,6 +374,11 @@ def test_v2_learned_generation_routes_search_fallback_with_override(
         card_data_fingerprint="fixture-cards",
         effects_fingerprint="fixture-effects",
         search_descriptor_id=search_descriptor.descriptor_id,
+        search_continuation_policy=DEFAULT_SEARCH_CONTINUATION_POLICY,
+        fallback_algorithm_kind=None,
+        fallback_algorithm_descriptor_id=None,
+        hypothetical_continuation_policy=None,
+        schema_version=MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
     )
     learned = SeatPolicy(
         learned_descriptor.policy_id,

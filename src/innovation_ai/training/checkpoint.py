@@ -28,7 +28,11 @@ from innovation_ai.innovation.state import (
     STATE_SCHEMA_VERSION,
     TERMINAL_SCHEMA_VERSION,
 )
-from innovation_ai.search.contracts import PRODUCTION_SEARCH_DESCRIPTOR
+from innovation_ai.search.contracts import (
+    MINIMAX_SEARCH_DESCRIPTOR_KIND,
+    PRODUCTION_SEARCH_DESCRIPTOR,
+    ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+)
 from innovation_ai.training.encoding import EncoderManifest, build_encoder_manifest
 from innovation_ai.training.model import (
     VALUE_NETWORK_ARCHITECTURE,
@@ -41,18 +45,25 @@ if TYPE_CHECKING:
 
 CHECKPOINT_MANIFEST_SCHEMA_VERSION = 1
 LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION = 1
-POLICY_DESCRIPTOR_SCHEMA_VERSION = 2
+MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION = 2
+GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION = 3
+POLICY_DESCRIPTOR_SCHEMA_VERSION = GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION
 
 DEFAULT_AFTERSTATE_BOUNDARY_SEMANTICS_VERSION = "immediate-one-transition-v1"
 DEFAULT_INFORMATION_SET_SAMPLER_VERSION = "information-set-sampler-v1"
 DEFAULT_SAMPLER_RNG_VERSION = "sha256-counter-v1"
 LEGACY_DEFAULT_FALLBACK_AGENT = "simple-heuristic"
 DEFAULT_FALLBACK_AGENT = "sampled-minimax-heuristic"
+DEFAULT_ROLLOUT_FALLBACK_AGENT = "sampled-turn-rollout-heuristic"
 DEFAULT_FALLBACK_AGENT_VERSION = "v1"
 DEFAULT_LEARNED_TURN_ACTION_POLICY = "sampled-afterstate-value-v1"
 DEFAULT_SEARCH_CONTINUATION_POLICY = "hand-engineered-minimax-both-players-v1"
 DEFAULT_SELECTOR_VERSION = "temperature-softmax-v1"
 DEFAULT_SELECTOR_RNG_VERSION = "sha256-domain-separated-v1"
+ROLLOUT_CHECKPOINT_LINEAGE_REQUIRED = (
+    "rollout learned-policy approval requires a rollout-trained checkpoint lineage schema; "
+    "checkpoint manifest schema v1/Milestone 3 lineage is not eligible"
+)
 
 
 class CheckpointError(ValueError):
@@ -375,16 +386,51 @@ class PolicyDescriptor:
     temperature: float = 0.0
     selector_version: str = DEFAULT_SELECTOR_VERSION
     selector_rng_version: str = DEFAULT_SELECTOR_RNG_VERSION
-    search_descriptor_id: str | None = PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+    search_descriptor_id: str | None = None
     learned_turn_action_policy: str | None = DEFAULT_LEARNED_TURN_ACTION_POLICY
-    search_continuation_policy: str | None = DEFAULT_SEARCH_CONTINUATION_POLICY
+    search_continuation_policy: str | None = None
+    fallback_algorithm_kind: str | None = MINIMAX_SEARCH_DESCRIPTOR_KIND
+    fallback_algorithm_descriptor_id: str | None = PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+    hypothetical_continuation_policy: str | None = DEFAULT_SEARCH_CONTINUATION_POLICY
     schema_version: int = POLICY_DESCRIPTOR_SCHEMA_VERSION
     policy_id: str = field(init=False)
 
     def __post_init__(self) -> None:
+        # The current dataclass defaults are schema v3. Normalize that exact default trio away for
+        # explicit historical constructors so pre-v3 ``schema_version=1/2`` call sites keep their
+        # original behavior; strict payload decoding still requires each version's exact fields.
+        if self.schema_version in {
+            LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+            MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+        } and (
+            self.fallback_algorithm_kind,
+            self.fallback_algorithm_descriptor_id,
+            self.hypothetical_continuation_policy,
+        ) == (
+            MINIMAX_SEARCH_DESCRIPTOR_KIND,
+            PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id,
+            DEFAULT_SEARCH_CONTINUATION_POLICY,
+        ):
+            object.__setattr__(self, "fallback_algorithm_kind", None)
+            object.__setattr__(self, "fallback_algorithm_descriptor_id", None)
+            object.__setattr__(self, "hypothetical_continuation_policy", None)
+        if self.schema_version == MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            if self.search_descriptor_id is None:
+                object.__setattr__(
+                    self,
+                    "search_descriptor_id",
+                    PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id,
+                )
+            if self.search_continuation_policy is None:
+                object.__setattr__(
+                    self,
+                    "search_continuation_policy",
+                    DEFAULT_SEARCH_CONTINUATION_POLICY,
+                )
         if self.schema_version not in {
             LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION,
-            POLICY_DESCRIPTOR_SCHEMA_VERSION,
+            MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+            GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION,
         }:
             raise PolicyCompatibilityError(
                 f"unsupported policy descriptor schema {self.schema_version}"
@@ -427,6 +473,17 @@ class PolicyDescriptor:
                 raise PolicyCompatibilityError(
                     "schema-v1 policy descriptors cannot contain schema-v2 fields"
                 )
+            if any(
+                value is not None
+                for value in (
+                    self.fallback_algorithm_kind,
+                    self.fallback_algorithm_descriptor_id,
+                    self.hypothetical_continuation_policy,
+                )
+            ):
+                raise PolicyCompatibilityError(
+                    "schema-v1 policy descriptors cannot contain schema-v3 fields"
+                )
             if (
                 self.fallback_agent != LEGACY_DEFAULT_FALLBACK_AGENT
                 or self.fallback_agent_version != DEFAULT_FALLBACK_AGENT_VERSION
@@ -434,7 +491,18 @@ class PolicyDescriptor:
                 raise PolicyCompatibilityError(
                     "schema-v1 policy descriptor fallback differs from legacy contract"
                 )
-        else:
+        elif self.schema_version == MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            if any(
+                value is not None
+                for value in (
+                    self.fallback_algorithm_kind,
+                    self.fallback_algorithm_descriptor_id,
+                    self.hypothetical_continuation_policy,
+                )
+            ):
+                raise PolicyCompatibilityError(
+                    "schema-v2 policy descriptors cannot contain schema-v3 fields"
+                )
             search_descriptor_id = _require_string(
                 self.search_descriptor_id, "policy descriptor search_descriptor_id"
             )
@@ -459,6 +527,59 @@ class PolicyDescriptor:
                 raise PolicyCompatibilityError(
                     "schema-v2 policy descriptor requires public-covered-v1 information"
                 )
+        else:
+            if self.search_descriptor_id is not None or self.search_continuation_policy is not None:
+                raise PolicyCompatibilityError(
+                    "schema-v3 policy descriptors cannot contain minimax-named schema-v2 fields"
+                )
+            _require_string(
+                self.learned_turn_action_policy,
+                "policy descriptor learned_turn_action_policy",
+            )
+            fallback_algorithm_kind = _require_string(
+                self.fallback_algorithm_kind,
+                "policy descriptor fallback_algorithm_kind",
+            )
+            fallback_algorithm_descriptor_id = _require_string(
+                self.fallback_algorithm_descriptor_id,
+                "policy descriptor fallback_algorithm_descriptor_id",
+            )
+            digest = fallback_algorithm_descriptor_id.removeprefix("sha256:")
+            if (
+                not fallback_algorithm_descriptor_id.startswith("sha256:")
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise PolicyCompatibilityError(
+                    "policy descriptor fallback_algorithm_descriptor_id must be a tagged sha256 "
+                    "digest"
+                )
+            _require_string(
+                self.hypothetical_continuation_policy,
+                "policy descriptor hypothetical_continuation_policy",
+            )
+            expected_kind_by_agent = {
+                DEFAULT_FALLBACK_AGENT: MINIMAX_SEARCH_DESCRIPTOR_KIND,
+                DEFAULT_ROLLOUT_FALLBACK_AGENT: ROLLOUT_SEARCH_DESCRIPTOR_KIND,
+            }
+            try:
+                expected_kind = expected_kind_by_agent[self.fallback_agent]
+            except KeyError as error:
+                raise PolicyCompatibilityError(
+                    "schema-v3 policy descriptor fallback agent has no compatible algorithm kind"
+                ) from error
+            if fallback_algorithm_kind != expected_kind:
+                raise PolicyCompatibilityError(
+                    "schema-v3 policy descriptor fallback agent and algorithm kind are incompatible"
+                )
+            if self.fallback_agent_version != DEFAULT_FALLBACK_AGENT_VERSION:
+                raise PolicyCompatibilityError(
+                    "schema-v3 policy descriptor fallback agent version is incompatible"
+                )
+            if self.information_policy_version != PUBLIC_COVERED_INFORMATION_POLICY_VERSION:
+                raise PolicyCompatibilityError(
+                    "schema-v3 policy descriptor requires public-covered-v1 information"
+                )
 
         object.__setattr__(
             self,
@@ -467,40 +588,50 @@ class PolicyDescriptor:
         )
 
     def _identity_payload(self) -> dict[str, object]:
+        common_names = (
+            "checkpoint_id",
+            "encoder_layout_fingerprint",
+            "card_data_fingerprint",
+            "effects_fingerprint",
+            "engine_version",
+            "rules_version",
+            "information_policy_version",
+            "action_schema_version",
+            "decision_schema_version",
+            "observation_schema_version",
+            "value_position_schema_version",
+            "public_boundary_schema_version",
+            "afterstate_boundary_semantics_version",
+            "information_set_sampler_version",
+            "sampler_rng_version",
+            "determinization_count",
+            "fallback_agent",
+            "fallback_agent_version",
+            "temperature",
+            "selector_version",
+            "selector_rng_version",
+        )
+        names: tuple[str, ...]
         if self.schema_version == LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            names = (*common_names, "schema_version")
+        elif self.schema_version == MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION:
             names = (
-                "checkpoint_id",
-                "encoder_layout_fingerprint",
-                "card_data_fingerprint",
-                "effects_fingerprint",
-                "engine_version",
-                "rules_version",
-                "information_policy_version",
-                "action_schema_version",
-                "decision_schema_version",
-                "observation_schema_version",
-                "value_position_schema_version",
-                "public_boundary_schema_version",
-                "afterstate_boundary_semantics_version",
-                "information_set_sampler_version",
-                "sampler_rng_version",
-                "determinization_count",
-                "fallback_agent",
-                "fallback_agent_version",
-                "temperature",
-                "selector_version",
-                "selector_rng_version",
+                *common_names,
+                "search_descriptor_id",
+                "learned_turn_action_policy",
+                "search_continuation_policy",
                 "schema_version",
             )
-            return {name: getattr(self, name) for name in names}
-        return cast(
-            dict[str, object],
-            {
-                name: getattr(self, name)
-                for name in self.__dataclass_fields__
-                if name != "policy_id"
-            },
-        )
+        else:
+            names = (
+                *common_names,
+                "learned_turn_action_policy",
+                "fallback_algorithm_kind",
+                "fallback_algorithm_descriptor_id",
+                "hypothetical_continuation_policy",
+                "schema_version",
+            )
+        return {name: getattr(self, name) for name in names}
 
     def payload(self) -> dict[str, object]:
         """Return canonical JSON-compatible descriptor content and derived identity."""
@@ -521,7 +652,7 @@ class PolicyDescriptor:
 
     @classmethod
     def from_payload(cls, payload: object) -> PolicyDescriptor:
-        """Decode an exact schema-v1 or schema-v2 descriptor and verify its identity."""
+        """Decode an exact schema-v1, schema-v2, or schema-v3 descriptor and verify its identity."""
 
         if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
             raise PolicyCompatibilityError("policy descriptor must be a JSON object")
@@ -553,11 +684,18 @@ class PolicyDescriptor:
         }
         if schema_version == LEGACY_POLICY_DESCRIPTOR_SCHEMA_VERSION:
             expected = common_fields
-        elif schema_version == POLICY_DESCRIPTOR_SCHEMA_VERSION:
+        elif schema_version == MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION:
             expected = common_fields | {
                 "search_descriptor_id",
                 "learned_turn_action_policy",
                 "search_continuation_policy",
+            }
+        elif schema_version == GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION:
+            expected = common_fields | {
+                "learned_turn_action_policy",
+                "fallback_algorithm_kind",
+                "fallback_algorithm_descriptor_id",
+                "hypothetical_continuation_policy",
             }
         else:
             raise PolicyCompatibilityError(f"unsupported policy descriptor schema {schema_version}")
@@ -567,7 +705,10 @@ class PolicyDescriptor:
             search_descriptor_id = None
             learned_turn_action_policy = None
             search_continuation_policy = None
-        else:
+            fallback_algorithm_kind = None
+            fallback_algorithm_descriptor_id = None
+            hypothetical_continuation_policy = None
+        elif schema_version == MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION:
             search_descriptor_id = _require_string(
                 payload["search_descriptor_id"], "search_descriptor_id"
             )
@@ -576,6 +717,26 @@ class PolicyDescriptor:
             )
             search_continuation_policy = _require_string(
                 payload["search_continuation_policy"], "search_continuation_policy"
+            )
+            fallback_algorithm_kind = None
+            fallback_algorithm_descriptor_id = None
+            hypothetical_continuation_policy = None
+        else:
+            search_descriptor_id = None
+            learned_turn_action_policy = _require_string(
+                payload["learned_turn_action_policy"], "learned_turn_action_policy"
+            )
+            search_continuation_policy = None
+            fallback_algorithm_kind = _require_string(
+                payload["fallback_algorithm_kind"], "fallback_algorithm_kind"
+            )
+            fallback_algorithm_descriptor_id = _require_string(
+                payload["fallback_algorithm_descriptor_id"],
+                "fallback_algorithm_descriptor_id",
+            )
+            hypothetical_continuation_policy = _require_string(
+                payload["hypothetical_continuation_policy"],
+                "hypothetical_continuation_policy",
             )
         raw_temperature = payload["temperature"]
         if isinstance(raw_temperature, bool) or not isinstance(raw_temperature, (int, float)):
@@ -636,6 +797,9 @@ class PolicyDescriptor:
             search_descriptor_id=search_descriptor_id,
             learned_turn_action_policy=learned_turn_action_policy,
             search_continuation_policy=search_continuation_policy,
+            fallback_algorithm_kind=fallback_algorithm_kind,
+            fallback_algorithm_descriptor_id=fallback_algorithm_descriptor_id,
+            hypothetical_continuation_policy=hypothetical_continuation_policy,
             schema_version=schema_version,
         )
         if _require_string(payload["policy_id"], "policy_id") != descriptor.policy_id:
@@ -656,9 +820,65 @@ class PolicyDescriptor:
         temperature: float = 0.0,
         selector_version: str = DEFAULT_SELECTOR_VERSION,
         selector_rng_version: str = DEFAULT_SELECTOR_RNG_VERSION,
-        search_descriptor_id: str = PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id,
+        search_descriptor_id: str | None = None,
+        fallback_algorithm_kind: str | None = None,
+        fallback_algorithm_descriptor_id: str | None = None,
+        hypothetical_continuation_policy: str | None = None,
+        schema_version: int | None = None,
     ) -> PolicyDescriptor:
-        """Build a schema-v2 descriptor with fields copied from a compatible checkpoint."""
+        """Build an approved historical/minimax descriptor from a compatible checkpoint.
+
+        New calls create schema v3 with the generic minimax fallback. Passing the legacy
+        ``search_descriptor_id`` without an explicit schema keeps schema-v2 constructor behavior.
+        Rollout fields are rejected because checkpoint manifest schema v1 has no rollout-training
+        lineage declaration; schema-v3 rollout metadata may still be parsed or constructed directly
+        for experiments, but cannot be approved through this checkpoint boundary.
+        """
+
+        v3_values = (
+            fallback_algorithm_kind,
+            fallback_algorithm_descriptor_id,
+            hypothetical_continuation_policy,
+        )
+        generic_values_supplied = tuple(value is not None for value in v3_values)
+        if any(generic_values_supplied) and not all(generic_values_supplied):
+            raise PolicyCompatibilityError(
+                "schema-v3 from_checkpoint requires complete generic fallback fields"
+            )
+        if schema_version is None:
+            resolved_schema_version = (
+                MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION
+                if search_descriptor_id is not None
+                and not any(value is not None for value in v3_values)
+                else POLICY_DESCRIPTOR_SCHEMA_VERSION
+            )
+        else:
+            resolved_schema_version = schema_version
+        if resolved_schema_version not in {
+            MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+            GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION,
+        }:
+            raise PolicyCompatibilityError(
+                f"from_checkpoint cannot create policy descriptor schema {resolved_schema_version}"
+            )
+        if resolved_schema_version == MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION and any(
+            value is not None for value in v3_values
+        ):
+            raise PolicyCompatibilityError(
+                "schema-v2 from_checkpoint cannot accept schema-v3 fallback fields"
+            )
+        if (
+            resolved_schema_version == GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION
+            and search_descriptor_id is not None
+        ):
+            raise PolicyCompatibilityError(
+                "schema-v3 from_checkpoint cannot accept minimax-named search_descriptor_id"
+            )
+        if (
+            fallback_agent == DEFAULT_ROLLOUT_FALLBACK_AGENT
+            or fallback_algorithm_kind == ROLLOUT_SEARCH_DESCRIPTOR_KIND
+        ):
+            raise PolicyCompatibilityError(ROLLOUT_CHECKPOINT_LINEAGE_REQUIRED)
 
         return cls(
             checkpoint_id=manifest.checkpoint_id,
@@ -682,9 +902,49 @@ class PolicyDescriptor:
             temperature=temperature,
             selector_version=selector_version,
             selector_rng_version=selector_rng_version,
-            search_descriptor_id=search_descriptor_id,
+            search_descriptor_id=(
+                (
+                    PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+                    if search_descriptor_id is None
+                    else search_descriptor_id
+                )
+                if resolved_schema_version == MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION
+                else None
+            ),
             learned_turn_action_policy=DEFAULT_LEARNED_TURN_ACTION_POLICY,
-            search_continuation_policy=DEFAULT_SEARCH_CONTINUATION_POLICY,
+            search_continuation_policy=(
+                DEFAULT_SEARCH_CONTINUATION_POLICY
+                if resolved_schema_version == MINIMAX_POLICY_DESCRIPTOR_SCHEMA_VERSION
+                else None
+            ),
+            fallback_algorithm_kind=(
+                (
+                    MINIMAX_SEARCH_DESCRIPTOR_KIND
+                    if fallback_algorithm_kind is None
+                    else fallback_algorithm_kind
+                )
+                if resolved_schema_version == GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION
+                else None
+            ),
+            fallback_algorithm_descriptor_id=(
+                (
+                    PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+                    if fallback_algorithm_descriptor_id is None
+                    else fallback_algorithm_descriptor_id
+                )
+                if resolved_schema_version == GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION
+                else None
+            ),
+            hypothetical_continuation_policy=(
+                (
+                    DEFAULT_SEARCH_CONTINUATION_POLICY
+                    if hypothetical_continuation_policy is None
+                    else hypothetical_continuation_policy
+                )
+                if resolved_schema_version == GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION
+                else None
+            ),
+            schema_version=resolved_schema_version,
         )
 
 
@@ -1021,7 +1281,18 @@ def assert_policy_compatible(
     descriptor: PolicyDescriptor,
     manifest: CheckpointManifest,
 ) -> None:
-    """Reject a policy that names weights or compatibility fields inconsistently."""
+    """Reject a policy that names weights or compatibility fields inconsistently.
+
+    Checkpoint manifest schema v1 has no decision-algorithm training-lineage declaration.  It can
+    therefore approve historical/minimax policies only; schema-v3 rollout descriptors remain
+    parseable experimental metadata but cannot be attached to these checkpoints.
+    """
+
+    if descriptor.schema_version == GENERIC_POLICY_DESCRIPTOR_SCHEMA_VERSION and (
+        descriptor.fallback_agent == DEFAULT_ROLLOUT_FALLBACK_AGENT
+        or descriptor.fallback_algorithm_kind == ROLLOUT_SEARCH_DESCRIPTOR_KIND
+    ):
+        raise PolicyCompatibilityError(ROLLOUT_CHECKPOINT_LINEAGE_REQUIRED)
 
     expected = {
         "checkpoint_id": manifest.checkpoint_id,
