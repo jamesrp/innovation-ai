@@ -12,9 +12,10 @@ and the first measured training pilot exposed and diagnosed a deterministic poli
 reference benchmark, deterministic seeded/all-card/high-choice route soak, and end-to-end
 rollout-baseline smoke runners are implemented. The September 6 full reference protocol passed all
 R4 gates: 251/251 soak roots and 1,860/1,860 routes completed with a maximum route length of 18,
-and generation/arena smokes sustained 12.328 and 17.925 committed actions/second. No production
-rollout descriptor has yet been frozen. Do not run heuristic strength arenas, fresh training, or
-candidate evaluation until the passing artifacts are reviewed and that descriptor is frozen. See
+and generation/arena smokes sustained 12.328 and 17.925 committed actions/second. The exact R4-tested two-determinization, 1,024-transition rollout descriptor was production-frozen
+on September 6, 2026 as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`.
+R5 fixed heuristic validation is now in progress. Do not start fresh training or candidate evaluation
+until R5 passes. See
 the Milestone 4 addendum and deterministic rollout plan.
 
 Read these before changing engine or ML behavior:

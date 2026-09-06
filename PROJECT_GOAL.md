@@ -29,9 +29,10 @@ corpus completed all 322 routes with no failures or ceiling hits. On September 6
 protocol added 251 seeded/all-card/high-choice roots and completed all 1,860 soak routes with no
 failures or ceiling hits and a maximum route length of 18. The rollout baseline then sustained
 12.328 committed actions/s through self-play generation and 17.925 committed actions/s through a
-non-strength paired arena smoke. All R4 feasibility gates pass. No production rollout descriptor is
-frozen yet, and strength arenas, training, and candidate evaluation remain stopped pending artifact
-review and descriptor freeze. The primary learned selector remains `temperature-softmax-v1`; the
+non-strength paired arena smoke. All R4 feasibility gates pass. On September 6, 2026 the exact R4-tested descriptor was frozen for
+production as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`
+at two determinizations and a strict 1,024-transition route ceiling. Fixed R5 heuristic validation is
+now in progress; training and candidate evaluation remain stopped until it passes. The primary learned selector remains `temperature-softmax-v1`; the
 repetition-aware selector remains an experimental comparator.
 
 Preserve the engine as an explicit state machine. Every player choice remains a semantic

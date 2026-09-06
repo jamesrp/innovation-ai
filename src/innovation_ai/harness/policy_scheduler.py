@@ -34,6 +34,7 @@ from innovation_ai.search.contracts import (
     DEFAULT_SAMPLER_SEED_DERIVATION,
     DEFAULT_SEARCH_VERSION,
     MINIMAX_SEARCH_DESCRIPTOR_KIND,
+    PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR,
     PRODUCTION_SEARCH_DESCRIPTOR,
     ROLLOUT_SEARCH_DESCRIPTOR_KIND,
     AnySearchDescriptor,
@@ -335,7 +336,10 @@ class PolicyScheduler:
         self._sampler_factory = sampler_factory or self._default_sampler
         self._search_sampler_factory = search_sampler_factory or self._default_search_sampler
         descriptors: dict[str, AnySearchDescriptor] = {
-            PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR
+            PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR,
+            PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id: (
+                PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR
+            ),
         }
         descriptors.update(search_descriptors or {})
         for descriptor_id, descriptor in descriptors.items():

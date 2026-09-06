@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from innovation_ai.search.contracts import (
-    EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
+    PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR,
     PRODUCTION_SEARCH_DESCRIPTOR,
 )
 
@@ -81,7 +81,7 @@ SAMPLED_MINIMAX_AGENT_DESCRIPTOR = AgentDescriptor(
 SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR = AgentDescriptor(
     name="sampled-turn-rollout-heuristic",
     version="v1",
-    parameters=(("search_descriptor_id", EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id),),
+    parameters=(("search_descriptor_id", PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id),),
 )
 # Descriptive aliases keep callers from having to guess whether the implementation-family name
 # includes "turn" or "heuristic" while preserving one canonical descriptor object.

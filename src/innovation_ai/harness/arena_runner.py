@@ -55,6 +55,7 @@ from innovation_ai.search.contracts import (
     DEFAULT_ROLLOUT_ALGORITHM,
     DEFAULT_SEARCH_VERSION,
     MINIMAX_SEARCH_DESCRIPTOR_KIND,
+    PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR,
     PRODUCTION_SEARCH_DESCRIPTOR,
     ROLLOUT_SEARCH_DESCRIPTOR_KIND,
     AnySearchDescriptor,
@@ -308,7 +309,10 @@ class ArenaRunner:
         self._cache = evaluator_cache
         self._search_policy_descriptors = dict(search_policy_descriptors)
         self._search_descriptors: dict[str, AnySearchDescriptor] = {
-            PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR
+            PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR,
+            PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id: (
+                PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR
+            ),
         }
         self._search_descriptors.update(search_descriptors or {})
         self._factories = dict(baseline_factories)

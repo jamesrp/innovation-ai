@@ -8,8 +8,10 @@ provenance, private failure traces, and compatibility-preserving minimax decodin
 benchmark passed at one, two, and four determinizations. The added 251-root
 seeded/all-card/high-choice soak completed all 1,860 routes with no failures or ceiling hits and a
 maximum route length of 18; rollout generation and non-strength arena smokes sustained 12.328 and
-17.925 committed actions/second. No production rollout descriptor is frozen yet, so strength
-arenas/training remain stopped pending artifact review and descriptor freeze. See
+17.925 committed actions/second. On September 6, 2026 the exact tested descriptor was
+production-frozen as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`
+(two determinizations; strict 1,024-transition ceiling). R5 fixed heuristic validation is in progress;
+training remains stopped until R5 passes. See
 `docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md` and the feasibility addendum.
 
 **Historical implementation status (September 3, 2026):** the player-safe search stack, public-covered

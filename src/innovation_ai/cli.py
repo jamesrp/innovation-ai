@@ -712,6 +712,166 @@ def _iterate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rollout_validation(args: argparse.Namespace) -> int:
+    """Run one predeclared R5 rollout-heuristic arena stage."""
+
+    from dataclasses import fields
+
+    from innovation_ai.agents.descriptors import (
+        RANDOM_AGENT_DESCRIPTOR,
+        SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR,
+        SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
+    )
+    from innovation_ai.harness.arena import (
+        ArenaManifest,
+        BootstrapConfig,
+        PolicyPool,
+        PoolEntry,
+        dumps_arena_manifest,
+        plan_match_pair,
+        render_arena_report_table,
+    )
+    from innovation_ai.harness.arena import PolicyDescriptor as ArenaPolicyDescriptor
+    from innovation_ai.harness.arena_runner import (
+        ArenaActionLimitError,
+        ArenaRunner,
+        ArenaTraceConfiguration,
+        write_execution_artifacts,
+    )
+    from innovation_ai.harness.diagnostics import read_diagnostic_trace
+    from innovation_ai.harness.engine import InnovationEngineAdapter
+    from innovation_ai.innovation.protocol import apply_action, current_decision
+    from innovation_ai.innovation.serialization import action_from_payload
+    from innovation_ai.innovation.state import build_setup_state, state_hash
+    from innovation_ai.search.contracts import PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR
+
+    stages = {
+        "preflight-random": (RANDOM_AGENT_DESCRIPTOR, "random", 50_000, 25),
+        "preflight-heuristic": (
+            SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
+            "heuristic",
+            50_000,
+            25,
+        ),
+        "strength-heuristic": (
+            SIMPLE_HEURISTIC_AGENT_DESCRIPTOR,
+            "heuristic",
+            60_000,
+            100,
+        ),
+    }
+    opponent, opponent_kind, seed_start, pair_count = stages[args.stage]
+    candidate = SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR
+    candidate_id = candidate.descriptor_id
+    opponent_id = opponent.descriptor_id
+    output = args.output
+    output.mkdir(parents=True, exist_ok=True)
+    pairs = tuple(
+        plan_match_pair(
+            f"{args.stage}-{index:03d}",
+            seed_start + index,
+            candidate_id,
+            opponent_id,
+        )
+        for index in range(pair_count)
+    )
+    manifest = ArenaManifest(
+        f"r5-{args.stage}",
+        candidate_id,
+        PolicyPool(f"r5-{args.stage}-opponent", (PoolEntry(opponent_id, 1),)),
+        pairs,
+        BootstrapConfig(seed=0),
+    )
+    _write_canonical_json(
+        output / "arena-manifest.json",
+        json.loads(dumps_arena_manifest(manifest)),
+        immutable=True,
+    )
+    _write_canonical_json(
+        output / "r5-config.json",
+        {
+            "format": "innovation-ai-rollout-r5-config",
+            "schema_version": 1,
+            "stage": args.stage,
+            "seed_start": seed_start,
+            "seed_pairs": pair_count,
+            "max_actions": 10_000,
+            "candidate_policy_id": candidate_id,
+            "opponent_policy_id": opponent_id,
+            "rollout_descriptor_id": PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id,
+            "determinizations": PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR.determinization_count,
+            "source_revision": args.source_revision,
+        },
+        immutable=True,
+    )
+    policies = {
+        candidate_id: ArenaPolicyDescriptor(candidate_id, "search-heuristic"),
+        opponent_id: ArenaPolicyDescriptor(opponent_id, opponent_kind),
+    }
+    runner = ArenaRunner(
+        InnovationEngineAdapter(),
+        policies,
+        search_policy_descriptors={candidate_id: PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR},
+        max_actions=10_000,
+        run_seed=seed_start,
+        trace_configuration=ArenaTraceConfiguration(output / "traces", args.source_revision),
+    )
+    started = time.perf_counter()
+    try:
+        execution = runner.execute(manifest)
+    except ArenaActionLimitError as error:
+        _write_canonical_json(output / "arena-failure.json", error.diagnostic, immutable=True)
+        raise
+    elapsed = time.perf_counter() - started
+    write_execution_artifacts(output, execution)
+    total_actions = sum(game.game_length for game in execution.result.games)
+    no_progress: dict[str, int] = {}
+    for artifact in execution.trace_artifacts.values():
+        trace = read_diagnostic_trace(artifact.private_path)
+        state = build_setup_state(trace.header.setup_seed)
+        for step in trace.steps:
+            if state_hash(state) != step.before_state_hash:
+                raise RuntimeError("R5 trace replay before-state hash mismatch")
+            decision = current_decision(state)
+            if decision is None or decision.decision_id != step.decision_id:
+                raise RuntimeError("R5 trace replay decision mismatch")
+            action = action_from_payload(step.selected_action)
+            state = apply_action(state, action).state
+            if state_hash(state) != step.after_state_hash:
+                raise RuntimeError("R5 trace replay after-state hash mismatch")
+        if state_hash(state) != trace.footer.final_state_hash:
+            raise RuntimeError("R5 trace replay final-state hash mismatch")
+        for key, value in trace.footer.no_progress_totals.items():
+            no_progress[key] = no_progress.get(key, 0) + value
+    search_telemetry = {
+        field.name: getattr(execution.search_telemetry, field.name)
+        for field in fields(execution.search_telemetry)
+    }
+    _write_stage_telemetry(
+        output / "arena-telemetry.json",
+        {
+            "completed_games": len(execution.result.games),
+            "actions": total_actions,
+            "elapsed_seconds": elapsed,
+            "actions_per_second": total_actions / elapsed,
+            "peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+            "sampler_failures": 0,
+            "rollout_failures": 0,
+            "invariant_failures": 0,
+            "replay_failures": 0,
+            "trace_failures": 0,
+            "action_ceiling_failures": 0,
+            "search": search_telemetry,
+            "no_progress_totals": no_progress,
+        },
+    )
+    table = render_arena_report_table(execution.report)
+    (output / "arena-report.md").write_text(table, encoding="utf-8")
+    print(table, end="")
+    print(f"R5 {args.stage}: {total_actions / elapsed:.3f} committed actions/s")
+    return 0
+
+
 def _arena(args: argparse.Namespace) -> int:
     """Run a deterministic paired arena and write raw plus summarized artifacts."""
 
@@ -1195,6 +1355,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="also run the seeded/all-card soak and generation/arena throughput smokes",
     )
 
+    rollout_validation = subparsers.add_parser(
+        "rollout-validation",
+        help="run one fixed deterministic-rollout R5 validation stage",
+    )
+    rollout_validation.add_argument(
+        "--stage",
+        required=True,
+        choices=("preflight-random", "preflight-heuristic", "strength-heuristic"),
+    )
+    rollout_validation.add_argument("--output", type=Path, required=True)
+    rollout_validation.add_argument("--source-revision", required=True)
+
     self_play = subparsers.add_parser("self-play", help="generate compact replay self-play")
     self_play.add_argument("--run-dir", type=Path, required=True)
     self_play.add_argument("--games", type=int, required=True)
@@ -1310,6 +1482,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _baseline(args)
         if args.command == "rollout-feasibility":
             return _rollout_feasibility(args)
+        if args.command == "rollout-validation":
+            return _rollout_validation(args)
         if args.command == "self-play":
             return _self_play(args)
         if args.command == "dataset" and args.dataset_command == "build":

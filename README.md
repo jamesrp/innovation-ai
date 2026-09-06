@@ -29,9 +29,11 @@ benchmark completed all 322 routes with no failures or ceiling hits. The Septemb
 reference protocol then completed 251/251 seeded/all-card/high-choice soak roots and 1,860/1,860
 routes with no failures or ceiling hits and a maximum route length of 18. End-to-end rollout
 baseline generation and non-strength rollout-vs-random arena smokes sustained 12.328 and 17.925
-committed actions/second, respectively. Every R4 feasibility gate passed. No production rollout
-descriptor is frozen yet; fresh training and strength arenas remain stopped pending artifact review
-and descriptor freeze.
+committed actions/second, respectively. Every R4 feasibility gate passed. On September 6, 2026 the exact tested descriptor was
+production-frozen as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`
+(two determinizations; strict 1,024-transition route ceiling), with rollout agent
+`sampled-turn-rollout-heuristic-v1-c0c5487a9c2c5444`. Fixed R5 heuristic validation is now in
+progress; fresh training remains gated on its completion.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`

@@ -43,6 +43,7 @@ from innovation_ai.search.contracts import (
     DEFAULT_ROLLOUT_ALGORITHM,
     DEFAULT_SEARCH_VERSION,
     MINIMAX_SEARCH_DESCRIPTOR_KIND,
+    PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR,
     PRODUCTION_SEARCH_DESCRIPTOR,
     ROLLOUT_SEARCH_DESCRIPTOR_KIND,
     AnySearchDescriptor,
@@ -543,7 +544,8 @@ def _resolved_search_descriptors(
     search_descriptors: Mapping[str, AnySearchDescriptor] | None,
 ) -> dict[str, AnySearchDescriptor]:
     descriptors: dict[str, AnySearchDescriptor] = {
-        PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR
+        PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_SEARCH_DESCRIPTOR,
+        PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id: PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR,
     }
     descriptors.update(search_descriptors or {})
     for descriptor_id, descriptor in descriptors.items():

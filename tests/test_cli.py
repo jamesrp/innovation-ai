@@ -4,7 +4,24 @@ from pathlib import Path
 
 import pytest
 
-from innovation_ai.cli import main
+from innovation_ai.cli import build_parser, main
+
+
+def test_rollout_validation_stages_are_fixed_in_cli() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "rollout-validation",
+            "--stage",
+            "preflight-random",
+            "--output",
+            "artifacts/r5",
+            "--source-revision",
+            "revision",
+        ]
+    )
+    assert args.stage == "preflight-random"
+    assert args.output == Path("artifacts/r5")
 
 
 def test_doctor_reports_cpu(capsys: pytest.CaptureFixture[str]) -> None:

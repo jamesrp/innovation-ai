@@ -5,8 +5,10 @@
 2026. Its contracts, reference selector, scheduler/provenance integration, schema-v3 learned-policy
 identity, compact-replay schema v2, diagnostics, expanded core benchmark, route-length soak, and
 end-to-end rollout smoke measurements are implemented. The September 6 full reference protocol
-passed every R4 gate. No production rollout descriptor is frozen; strength arenas and training
-remain stopped pending artifact review and descriptor freeze.
+passed every R4 gate. On September 6, 2026 the exact tested rollout descriptor was
+production-frozen as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`
+at two determinizations with the strict 1,024-transition ceiling. R5 fixed heuristic validation is in
+progress; training remains stopped until it passes.
 
 The trusted-private and public-redacted local evidence is retained under:
 

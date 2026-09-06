@@ -5,8 +5,10 @@
 implemented, and the complete reference protocol passes. The 251-root seeded/all-card/high-choice
 soak completed all 1,860 routes with zero failures or ceiling hits and a maximum route length of 18;
 self-play generation and non-strength paired-arena smokes sustained 12.328 and 17.925 committed
-actions/second. No production rollout descriptor is frozen, and R5 strength arenas/R6 training have
-not started pending artifact review and descriptor freeze.
+actions/second. On September 6, 2026 the exact R4-tested descriptor was production-frozen as
+`sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1` with two
+determinizations and the strict 1,024-transition ceiling. R5 fixed heuristic validation is now in
+progress; R6 training has not started.
 **Purpose:** replace infeasible exhaustive continuation after each root action with one versioned,
 player-safe deterministic continuation rollout, while still evaluating every legal root action over
 common hidden-state determinizations.
@@ -413,6 +415,32 @@ Report W/D/L, paired intervals, seats, terminal reasons, game lengths, rollout r
 transitions, throughput, RSS, repeated strategic positions, and no-progress metrics. Seed sets must
 be committed before play and must not be extended adaptively.
 
+**Production freeze and fixed R5 schedule (September 6, 2026).** The production rollout descriptor
+is the exact R4-tested identity
+`sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`, with two
+determinizations and a strict 1,024-transition route ceiling. Its canonical rollout-agent identity
+is `sampled-turn-rollout-heuristic-v1-c0c5487a9c2c5444`. The historical identity-bearing
+`ceiling_status` field remains unchanged rather than creating an unmeasured descriptor.
+
+R5 uses these immutable schedules:
+
+- random completion preflight: setup seeds 50000–50024, both seats, 25 pairs;
+- original simple-heuristic completion preflight: setup seeds 50000–50024, both seats, 25 pairs;
+- simple-heuristic strength comparison: setup seeds 60000–60099, both seats, 100 pairs.
+
+Each stage enables trusted-private traces, verifies every trace by replaying its semantic actions and
+state hashes, and publishes deterministic arena results plus execution telemetry. Run sequentially:
+
+```bash
+REV=$(git rev-parse HEAD)
+uv run innovation-ai rollout-validation --stage preflight-random \
+  --source-revision "$REV" --output artifacts/runs/milestone-4/r5/preflight-random
+uv run innovation-ai rollout-validation --stage preflight-heuristic \
+  --source-revision "$REV" --output artifacts/runs/milestone-4/r5/preflight-heuristic
+uv run innovation-ai rollout-validation --stage strength-heuristic \
+  --source-revision "$REV" --output artifacts/runs/milestone-4/r5/strength-heuristic
+```
+
 ### Work Package R6 — resume Milestone 4 training
 
 Only after heuristic validation passes:
@@ -506,7 +534,7 @@ This recovery plan does not include:
 - [x] Scheduler, policy identity, replay, training, arena, and diagnostic routing implemented.
 - [x] Focused safety, determinism, horizon, setup, effect, and compatibility tests pass.
 - [x] Expanded feasibility process passes overall at two determinizations, including the 251-root route-length soak and both throughput smokes.
-- [ ] Fixed heuristic completion and strength arenas pass.
+- [ ] Fixed heuristic completion and strength arenas pass (R5 started September 6, 2026).
 - [ ] Fresh Milestone 4 training and runnable primary policy complete.
 - [ ] Fixed candidate diagnostics and preflights complete.
 - [x] `make check` and relevant determinization/search soaks pass.

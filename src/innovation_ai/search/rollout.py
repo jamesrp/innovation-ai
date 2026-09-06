@@ -43,12 +43,12 @@ from innovation_ai.search.contracts import (
     DEFAULT_ROLLOUT_IMPLEMENTATION,
     DEFAULT_ROLLOUT_INFORMATION_POLICY,
     DEFAULT_ROLLOUT_SAMPLE_AGGREGATION,
+    DEFAULT_ROLLOUT_SEARCH_DESCRIPTOR,
     DEFAULT_ROLLOUT_STARTING_MELD,
     DEFAULT_ROLLOUT_TURN_BOUNDARY,
     DEFAULT_SAMPLER_SEED_DERIVATION,
     DEFAULT_SAMPLING_ALGORITHM,
     DEFAULT_TIE_BREAK,
-    EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
     RolloutFailureTrace,
     RolloutLeafTelemetry,
     RolloutPathStep,
@@ -196,11 +196,11 @@ class _SimpleHeuristicContinuationAdapter:
 
 
 class DeterministicSampledRollout:
-    """Versioned experimental sampled deterministic turn-rollout implementation."""
+    """Versioned production sampled deterministic turn-rollout implementation."""
 
     def __init__(
         self,
-        descriptor: RolloutSearchDescriptor = EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
+        descriptor: RolloutSearchDescriptor = DEFAULT_ROLLOUT_SEARCH_DESCRIPTOR,
         *,
         registry: CardRegistry | None = None,
         programs: EffectProgramRegistry | None = None,
@@ -730,7 +730,7 @@ SampledRollout = DeterministicSampledRollout
 def select_sampled_rollout(
     spec: InformationSetSpec,
     sampled_states: Sequence[GameState],
-    descriptor: RolloutSearchDescriptor = EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
+    descriptor: RolloutSearchDescriptor = DEFAULT_ROLLOUT_SEARCH_DESCRIPTOR,
     *,
     registry: CardRegistry | None = None,
     programs: EffectProgramRegistry | None = None,

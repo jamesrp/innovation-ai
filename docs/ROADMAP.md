@@ -31,9 +31,10 @@ cycle's root cause. See `docs/MILESTONE_3_TRAINING_PROTOTYPE.md` and
 
 ## Milestone 4 — current: player-safe search heuristic and retraining
 
-Replace the simple printed-card heuristic with a deterministic sampled minimax policy that searches
-approximately two complete rounds through the real engine from player-safe synthetic states. Use it
-as both the primary heuristic baseline and the learned policy's setup/effect-choice fallback.
+Replace the simple printed-card heuristic with the production-frozen sampled deterministic
+turn-rollout policy, evaluating every root action across player-safe synthetic states and following
+one deterministic simple-heuristic continuation path to the completed-turn boundary. Validate it as
+a primary heuristic baseline before using it as the learned policy fallback.
 
 Milestone 4 also:
 

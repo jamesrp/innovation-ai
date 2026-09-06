@@ -32,7 +32,7 @@ from innovation_ai.innovation.state import (
 )
 from innovation_ai.innovation.types import CardId, Color, PlayerId
 from innovation_ai.search import (
-    EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
+    PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR,
     PRODUCTION_SEARCH_DESCRIPTOR,
     DeterministicSampledMinimax,
     DeterministicSampledRollout,
@@ -499,7 +499,7 @@ def test_explicit_search_assignment_controls_every_decision_kind_and_is_rebatch_
 
 
 def test_explicit_rollout_assignment_uses_rollout_result_and_sampler_seed_telemetry() -> None:
-    descriptor = EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR
+    descriptor = PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR
     assignment = SearchPolicyAssignment(
         SAMPLED_TURN_ROLLOUT_AGENT_DESCRIPTOR.descriptor_id,
         descriptor,
@@ -511,7 +511,6 @@ def test_explicit_rollout_assignment_uses_rollout_result_and_sampler_seed_teleme
         run_seed=19,
         generation=3,
         search_assignments={"rollout": assignment},
-        search_descriptors={descriptor.descriptor_id: descriptor},
         heuristic=_ExplodingAgent(),
     )
 

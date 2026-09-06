@@ -32,8 +32,11 @@ PRODUCTION_DETERMINIZATION_COUNT = 1
 PRODUCTION_ROUTE_TRANSITION_BUDGET = 400
 EXPERIMENTAL_ROLLOUT_DETERMINIZATION_COUNT = 2
 EXPERIMENTAL_ROLLOUT_ROUTE_TRANSITION_CEILING = 1024
-# Backward-compatible descriptive alias. The value is experimental and is not production-frozen.
-ROLLOUT_ROUTE_TRANSITION_CEILING = EXPERIMENTAL_ROLLOUT_ROUTE_TRANSITION_CEILING
+# The exact R4-tested values are now production-frozen. Keep the experimental aliases because
+# they are embedded in the immutable R1-R4 implementation and evidence.
+PRODUCTION_ROLLOUT_DETERMINIZATION_COUNT = EXPERIMENTAL_ROLLOUT_DETERMINIZATION_COUNT
+PRODUCTION_ROLLOUT_ROUTE_TRANSITION_CEILING = EXPERIMENTAL_ROLLOUT_ROUTE_TRANSITION_CEILING
+ROLLOUT_ROUTE_TRANSITION_CEILING = PRODUCTION_ROLLOUT_ROUTE_TRANSITION_CEILING
 
 # These strings are policy identity, not prose labels.  Changing any search behavior requires a
 # new value (and therefore a new descriptor digest), even if the dataclass schema does not change.
@@ -945,5 +948,8 @@ RolloutRootTelemetry = RolloutRootSelectionTelemetry
 
 PRODUCTION_SEARCH_DESCRIPTOR = SearchDescriptor()
 DEFAULT_SEARCH_DESCRIPTOR = PRODUCTION_SEARCH_DESCRIPTOR
-# This is explicitly experimental and does not replace the minimax production constant.
+# This identity was measured throughout R1-R4. Its historical ceiling-status string is identity-
+# bearing and therefore remains unchanged after production approval on September 6, 2026.
 EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR = RolloutSearchDescriptor()
+PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR = EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR
+DEFAULT_ROLLOUT_SEARCH_DESCRIPTOR = PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR

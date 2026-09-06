@@ -10,6 +10,7 @@ from innovation_ai.agents.descriptors import SIMPLE_HEURISTIC_AGENT_DESCRIPTOR
 from innovation_ai.search import (
     EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR,
     MINIMAX_SEARCH_DESCRIPTOR_KIND,
+    PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR,
     PRODUCTION_SEARCH_DESCRIPTOR,
     ROLLOUT_SEARCH_DESCRIPTOR_KIND,
     RolloutFailureTrace,
@@ -83,6 +84,14 @@ def test_search_descriptor_is_immutable_content_addressed_and_round_trips() -> N
     assert SearchDescriptor.loads(descriptor.dumps()) == descriptor
     assert json.loads(descriptor.dumps()) == descriptor.payload()
     assert descriptor == PRODUCTION_SEARCH_DESCRIPTOR
+
+    assert PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id == (
+        "sha256:a3de2116646c297b30b75e25fc4ab065ef1a0674f89b932eecd9ef5eea2b067e"
+    )
+    assert (
+        PRODUCTION_SEARCH_DESCRIPTOR.descriptor_id
+        != PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR.descriptor_id
+    )
 
     with pytest.raises(FrozenInstanceError):
         descriptor.route_transition_budget = 1  # type: ignore[misc]
@@ -168,6 +177,10 @@ def test_rollout_descriptor_is_distinct_tagged_and_content_addressed() -> None:
     descriptor = RolloutSearchDescriptor()
 
     assert descriptor == EXPERIMENTAL_ROLLOUT_SEARCH_DESCRIPTOR
+    assert descriptor == PRODUCTION_ROLLOUT_SEARCH_DESCRIPTOR
+    assert descriptor.descriptor_id == (
+        "sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1"
+    )
     assert descriptor.descriptor_kind == ROLLOUT_SEARCH_DESCRIPTOR_KIND
     assert descriptor.algorithm == "root-sampled-deterministic-turn-rollout-v1"
     assert descriptor.determinization_count == 2
