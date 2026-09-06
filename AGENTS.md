@@ -14,8 +14,9 @@ rollout-baseline smoke runners are implemented. The September 6 full reference p
 R4 gates: 251/251 soak roots and 1,860/1,860 routes completed with a maximum route length of 18,
 and generation/arena smokes sustained 12.328 and 17.925 committed actions/second. The exact R4-tested two-determinization, 1,024-transition rollout descriptor was production-frozen
 on September 6, 2026 as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`.
-R5 fixed heuristic validation is now in progress. Do not start fresh training or candidate evaluation
-until R5 passes. See
+R5 fixed heuristic validation is now in progress: the 25-pair random completion preflight passed on
+September 6, 2026, and the original-simple-heuristic preflight is next. Do not start fresh training
+or candidate evaluation until all R5 gates pass. See
 the Milestone 4 addendum and deterministic rollout plan.
 
 Read these before changing engine or ML behavior:

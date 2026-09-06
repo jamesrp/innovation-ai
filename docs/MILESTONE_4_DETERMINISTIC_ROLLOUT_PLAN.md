@@ -441,6 +441,13 @@ uv run innovation-ai rollout-validation --stage strength-heuristic \
   --source-revision "$REV" --output artifacts/runs/milestone-4/r5/strength-heuristic
 ```
 
+The random completion preflight completed on September 6, 2026: all 50 games finished below the
+action ceiling, with zero recorded sampler, rollout, invariant, replay, trace, or action-ceiling
+failures. The rollout heuristic scored 49–0–1, paired utility 0.980 with a 95% interval of
+[0.940, 1.000], and sustained 18.099 committed actions/second. Mean/minimum/maximum game length was
+102.6/49/193 actions; the maximum rollout route was 34 transitions. The original-simple-heuristic
+preflight is the next active R5 gate; no strength conclusion follows from the random preflight.
+
 ### Work Package R6 — resume Milestone 4 training
 
 Only after heuristic validation passes:
