@@ -7,11 +7,15 @@ toward a strong self-play-trained Innovation AI. **Milestones 1–3 are complete
 engine covers all 105 supplied cards, the first learned-value pipeline includes encoder v1, compact
 replay training, information-safe afterstates, frozen self-play, paired arenas, and CPU profiling,
 and the first measured training pilot exposed and diagnosed a deterministic policy cycle.
-**Milestone 4 is current but stopped at feasibility:** the player-safe search/public-information/
-observability foundation is implemented, but the exhaustive one-completed-turn rerun failed the
-frozen cutoff and throughput gates. Do not run heuristic strength arenas, fresh training, or
-candidate evaluation until the owner chooses a search optimization, approximation, or compute
-change. See the Milestone 4 addendum.
+**Milestone 4 is current:** the deterministic turn-rollout recovery was owner-approved on September
+5, 2026. Its contracts, reference implementation, scheduler/provenance integration, expanded
+reference benchmark, deterministic seeded/all-card/high-choice route soak, and end-to-end
+rollout-baseline smoke runners are implemented. The September 6 full reference protocol passed all
+R4 gates: 251/251 soak roots and 1,860/1,860 routes completed with a maximum route length of 18,
+and generation/arena smokes sustained 12.328 and 17.925 committed actions/second. No production
+rollout descriptor has yet been frozen. Do not run heuristic strength arenas, fresh training, or
+candidate evaluation until the passing artifacts are reviewed and that descriptor is frozen. See
+the Milestone 4 addendum and deterministic rollout plan.
 
 Read these before changing engine or ML behavior:
 

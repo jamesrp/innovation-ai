@@ -1,6 +1,18 @@
 # Milestone 4 Plan — Player-Safe Search Heuristic and Retraining
 
-**Implementation status (September 3, 2026):** the player-safe search stack, public-covered
+**Implementation status (September 6, 2026):** the owner-approved deterministic turn-rollout
+recovery now passes the complete R4 reference protocol. Work Packages R1–R3 remain implemented
+with a distinct rollout descriptor, player-safe simple-heuristic continuation,
+scheduler/arena/self-play routing, schema-v3 learned-policy identity, compact-replay schema v2
+provenance, private failure traces, and compatibility-preserving minimax decoding. The 12-root core
+benchmark passed at one, two, and four determinizations. The added 251-root
+seeded/all-card/high-choice soak completed all 1,860 routes with no failures or ceiling hits and a
+maximum route length of 18; rollout generation and non-strength arena smokes sustained 12.328 and
+17.925 committed actions/second. No production rollout descriptor is frozen yet, so strength
+arenas/training remain stopped pending artifact review and descriptor freeze. See
+`docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md` and the feasibility addendum.
+
+**Historical implementation status (September 3, 2026):** the player-safe search stack, public-covered
 compatibility, schema-v2 policy identity, scheduler/generation/arena routing, and private traces are
 implemented. Work Package 1's exact seed-50000 reproduction is complete. The original 4/3/4-turn
 benchmark failed its predeclared gates; on September 3, 2026 the owner replaced that horizon with a
@@ -8,9 +20,9 @@ single completed-turn horizon and rejected selective continuation. The revised o
 now also failed: no tested 400/800/1,600-transition budget at one, two, or four determinizations met
 the cutoff, immediate-fallback, per-category completion, or throughput gates. No production search
 descriptor is frozen, and Milestone 4 is stopped before heuristic arenas, training, or strength
-evaluation. See `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. A nonbinding deterministic
-turn-rollout recovery proposal requested on September 5, 2026 is documented in
-`docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md`; adopting it requires an explicit owner decision.
+evaluation. See `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. The deterministic turn-rollout recovery
+was approved on September 5, 2026; its core implementation and reference-corpus feasibility pass
+are recorded in `docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md`.
 
 **Historical planning status (September 2, 2026):** approved for implementation; no implementation
 work had started at that time. Milestone 3 remains an immutable historical pilot. Its

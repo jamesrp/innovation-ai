@@ -6,29 +6,32 @@ of Keldon Jones's 2009 Race for the Galaxy AI project.
 
 ## Current milestone
 
-**Milestones 1–3 are complete. Milestone 4 is at a documented feasibility stop.** The repository
-now includes the complete deterministic engine, the first learned-value pipeline and measured
-pilot, and the Milestone 4 player-safe search/diagnostic foundation.
+**Milestones 1–3 are complete. Milestone 4 is advancing through deterministic-rollout
+feasibility gates.** The repository now includes the complete deterministic engine, the first
+learned-value pipeline and measured pilot, and the Milestone 4 player-safe search/diagnostic
+foundation.
 
 Milestone 4 implemented:
 
 - `public-covered-v1` as the default for new games, while preserving legacy replay/checkpoint
   compatibility;
 - player-safe determinizations for paid turns, simultaneous starting melds, and pending effects;
-- deterministic complete-turn sampled minimax with a versioned hand-engineered leaf evaluator,
-  iterative budgets, transpositions, cycle cutoffs, and auditable route telemetry;
-- search-aware schema-v2 policy identities and scheduler/self-play/arena routing;
+- preserved historical complete-turn sampled minimax plus a distinct owner-approved deterministic
+  turn-rollout selector using the same player-safe determinizations and leaf evaluator;
+- tagged minimax/rollout contracts, schema-v3 learned-policy identities, compact-replay schema v2,
+  and scheduler/self-play/arena routing;
 - complete trusted-private compressed traces plus public redacted summaries; and
 - exact reproduction of the historical seed-50000 action-ceiling cycle.
 
-The September 3, 2026 representative feasibility sweep found that the original exhaustive 4/3/4
-completed-turn horizon had a 100% route-cutoff rate at the provisional 400-transition budget and
-was too slow for generation. The owner then replaced it with an exhaustive one completed-turn
-horizon and rejected selective continuation. The one-turn 400/800/1,600-transition sweep also
-failed: the best full-depth completion was 90.3%, immediate-leaf fallback remained 9.7%, and
-one-determinization throughput reached at most 0.50 roots/s against a 2.0 roots/s gate. No
-production search descriptor is frozen. Fresh training and strength arenas remain stopped pending
-a project decision; see the feasibility addendum before running a new iteration.
+The September 3, 2026 exhaustive-search experiments remain historical failures. On September 5,
+2026 the owner approved the deterministic turn-rollout recovery. Its expanded 12-root core
+benchmark completed all 322 routes with no failures or ceiling hits. The September 6 full
+reference protocol then completed 251/251 seeded/all-card/high-choice soak roots and 1,860/1,860
+routes with no failures or ceiling hits and a maximum route length of 18. End-to-end rollout
+baseline generation and non-strength rollout-vs-random arena smokes sustained 12.328 and 17.925
+committed actions/second, respectively. Every R4 feasibility gate passed. No production rollout
+descriptor is frozen yet; fresh training and strength arenas remain stopped pending artifact review
+and descriptor freeze.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`
@@ -37,7 +40,7 @@ a project decision; see the feasibility addendum before running a new iteration.
 - Milestone 2 implementation/report: `docs/MILESTONE_2_REPORT.md`
 - Milestone 3 training prototype/report: `docs/MILESTONE_3_TRAINING_PROTOTYPE.md`,
   `docs/MILESTONE_3_REPORT.md`
-- Milestone 4 plan/feasibility stop and proposed rollout recovery:
+- Milestone 4 plan, feasibility evidence, and approved rollout recovery:
   `docs/MILESTONE_4_PLAN.md`, `docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`,
   `docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md`
 - Afterstate feasibility decision: `docs/MILESTONE_2_AFTERSTATE_SPIKE.md`
@@ -62,8 +65,15 @@ INNOVATION_LARGE_FUZZ_SEEDS=100 uv run pytest -q -m fuzz tests/innovation/test_f
 make run           # Verify the environment
 make web           # Serve the hot-seat browser QA table on port 8000
 
+# Full R4 reference protocol: 12-root benchmark, 251-root route soak, and both throughput smokes.
+# The output directory must be fresh. Measured wall time on the two-vCPU reference host is about
+# 71 seconds (allow 1–2 minutes); peak process RSS is about 234 MiB.
+time uv run innovation-ai rollout-feasibility \
+  --output artifacts/runs/milestone-4/deterministic-turn-rollout-r4-full \
+  --measure-remaining-gates
+
 # Historical learned-value workflow. Do not start a new Milestone 4 iteration until the
-# search feasibility stop in docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md is resolved.
+# passing R4 artifacts are reviewed and a production rollout descriptor is frozen.
 uv run innovation-ai self-play --run-dir artifacts/runs/bootstrap-001 \
   --games 1000 --player-1 heuristic --player-2 random --seed 1000
 uv run innovation-ai dataset build --replays artifacts/runs/bootstrap-001 \

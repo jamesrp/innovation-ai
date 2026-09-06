@@ -1,14 +1,19 @@
 # Milestone 4 Deterministic Turn-Rollout Recovery Plan
 
-**Date:** September 5, 2026  
-**Planning status:** proposed for owner review; not yet approved for implementation.  
+**Date:** September 6, 2026
+**Implementation status:** owner-approved on September 5, 2026. Work Packages R1–R4 are
+implemented, and the complete reference protocol passes. The 251-root seeded/all-card/high-choice
+soak completed all 1,860 routes with zero failures or ceiling hits and a maximum route length of 18;
+self-play generation and non-strength paired-arena smokes sustained 12.328 and 17.925 committed
+actions/second. No production rollout descriptor is frozen, and R5 strength arenas/R6 training have
+not started pending artifact review and descriptor freeze.
 **Purpose:** replace infeasible exhaustive continuation after each root action with one versioned,
 player-safe deterministic continuation rollout, while still evaluating every legal root action over
 common hidden-state determinizations.
 
-This plan is a recovery proposal for the feasibility stop recorded in
-`docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. It supersedes neither the historical measurements nor
-the current binding search contract until the owner explicitly approves implementation.
+This plan is the approved recovery path for the feasibility stop recorded in
+`docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. Historical minimax descriptors and measurements remain
+immutable. Implementation may advance only through the plan's sequential gates.
 
 ## 1. Decision requested
 
@@ -242,11 +247,16 @@ explicit experimental descriptor during R1–R4.
 The primary heuristic agent becomes `sampled-turn-rollout-heuristic-v1`. Learned policies require a
 new policy-descriptor schema v3 with explicit fallback algorithm kind/descriptor and hypothetical
 continuation-policy fields; schema v2's minimax-named continuation semantics must not be reused.
-Compact replay and generation manifests likewise receive a generic per-seat decision-algorithm
-reference rather than storing rollout identity under a misleading legacy minimax field.
+Compact replay schema v2 and generation manifests likewise receive a generic per-seat
+decision-algorithm reference and determinization count rather than storing rollout identity under a
+misleading legacy minimax field. Compact replay schema v1 remains byte-shape immutable; its global
+`search_descriptor_id` is decoded and emitted only for historical schema-v1 producers.
 
 A rollout policy is incompatible by training lineage with every Milestone 3 checkpoint/policy and
 every provisional minimax policy, even where the encoder/model tensors are technically loadable.
+No rollout-trained checkpoint-manifest schema exists yet: schema-v3 rollout policy descriptors may
+be parsed as experimental metadata, but `from_checkpoint` and checkpoint compatibility approval
+must reject attaching them to existing schema-v1/Milestone-3 checkpoints.
 `public-covered-v1` and `temperature-softmax-v1` remain the intended Milestone 4 information policy
 and primary learned selector.
 
@@ -363,6 +373,25 @@ deterministic counter digests and complete-file digests that include timing.
 Before freezing the 1,024-transition ceiling, add all-card/high-choice fixtures and seeded
 route-length soaks beyond the eight-root corpus. Corpus success alone does not establish headroom.
 
+**Implemented September 6, 2026.** The reference soak uses setup seeds 46000–46015 and snapshots
+after 0, 4, 8, 12, 16, 20, 24, 28, and 32 committed transitions (144 seeded roots), one
+paid-action/Dogma root for each of the 105 base-game cards, and two focused roots with 46 and 10
+legal actions. Every root is passed through the real player-safe information-set sampler and
+`DeterministicSampledRollout` selector at two determinizations under the experimental 1,024 ceiling.
+The generation smoke runs two serial rollout-vs-rollout games through `run_generation`; the arena
+smoke runs one rollout-vs-random paired seat swap through `ArenaRunner`. Both count only committed
+semantic actions and use fixed seeds/configuration digests. The combined reference command is:
+
+```bash
+time uv run innovation-ai rollout-feasibility \
+  --output artifacts/runs/milestone-4/deterministic-turn-rollout-r4-full \
+  --measure-remaining-gates
+```
+
+The output directory must be fresh so resumable generation cannot turn a throughput measurement
+into a cache hit. The measured two-vCPU wall time was 71.34 seconds with about 234 MiB peak process
+RSS; allow 1–2 minutes on a comparable host.
+
 The target production setting is **two determinizations**, proposed as an explicit cost/quality
 choice: one sample is too brittle for hidden allocation, while four doubles the target cost. The
 one/two/four agreement and value-variance report informs review but must not be tuned from playing
@@ -433,8 +462,12 @@ choice:
 - arena smoke throughput of at least **1.0 committed action/second**.
 
 Throughput cannot compensate for incomplete routes or failures. Strength cannot compensate for
-missing throughput. The gates may be made stricter before seeing strength results, but must not be
-relaxed after feasibility or arena outcomes are known.
+missing throughput. A corpus subset, reduced repetition count, reduced route soak, smaller smoke,
+or other non-reference configuration may report diagnostics but can never report an overall pass.
+`RolloutFeasibilityResult` therefore treats the route soak, generation smoke, and arena smoke as
+optional measured inputs, reports each missing input as pending, and reports overall PASS only when
+all three use their exact reference configurations and satisfy their frozen completion, headroom,
+and throughput thresholds. The September 6 reference run did so without relaxing any gate.
 
 ## 8. Stop conditions
 
@@ -467,14 +500,14 @@ This recovery plan does not include:
 
 ## 10. Completion checklist
 
-- [ ] Owner approves the deterministic rollout approximation and superseding experiment decision.
-- [ ] Rollout descriptor, continuation policy, horizon, evaluator, sampling, and gates frozen.
-- [ ] Reference rollout and telemetry implemented with minimax compatibility preserved.
-- [ ] Scheduler, policy identity, replay, training, arena, and diagnostic routing implemented.
-- [ ] Focused safety, determinism, horizon, setup, effect, and compatibility tests pass.
-- [ ] Expanded feasibility corpus passes at two determinizations.
+- [x] Owner approves the deterministic rollout approximation and superseding experiment decision.
+- [x] Rollout descriptor, continuation policy, horizon, evaluator, sampling, and gates frozen for the experiment.
+- [x] Reference rollout and telemetry implemented with minimax compatibility preserved.
+- [x] Scheduler, policy identity, replay, training, arena, and diagnostic routing implemented.
+- [x] Focused safety, determinism, horizon, setup, effect, and compatibility tests pass.
+- [x] Expanded feasibility process passes overall at two determinizations, including the 251-root route-length soak and both throughput smokes.
 - [ ] Fixed heuristic completion and strength arenas pass.
 - [ ] Fresh Milestone 4 training and runnable primary policy complete.
 - [ ] Fixed candidate diagnostics and preflights complete.
-- [ ] `make check` and relevant determinization/search soaks pass.
+- [x] `make check` and relevant determinization/search soaks pass.
 - [ ] Focused commits pushed to `origin`.

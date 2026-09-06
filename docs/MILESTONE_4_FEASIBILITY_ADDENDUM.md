@@ -1,11 +1,67 @@
 # Milestone 4 feasibility and diagnostic addendum
 
-**Date:** September 3, 2026  
-**Status:** both exhaustive search horizons tested for Milestone 4 are infeasible on the two-core
-CPU host. The original 4/3/4-turn gate failed, and the owner-approved one-completed-turn rerun also
-failed the unchanged cutoff, fallback, category-completion, and throughput gates. No production
-search descriptor, route budget, or determinization count is frozen. Heuristic arenas, training,
-and strength evaluation remain stopped pending a project decision.
+**Date:** September 6, 2026
+**Current status:** the owner approved the deterministic turn-rollout recovery on September 5,
+2026. Its contracts, reference selector, scheduler/provenance integration, schema-v3 learned-policy
+identity, compact-replay schema v2, diagnostics, expanded core benchmark, route-length soak, and
+end-to-end rollout smoke measurements are implemented. The September 6 full reference protocol
+passed every R4 gate. No production rollout descriptor is frozen; strength arenas and training
+remain stopped pending artifact review and descriptor freeze.
+
+The trusted-private and public-redacted local evidence is retained under:
+
+```text
+artifacts/runs/milestone-4/deterministic-turn-rollout/
+```
+
+The September 5 core-only reference run completed all 322 routes with no failures or ceiling hits.
+At the target two determinizations it measured 13.375 median roots/s across 12 roots, a 0.206-second
+worst per-root p95, and a maximum route length of 9 transitions. The public deterministic content
+digest was `sha256:b4c468f7bd2017a2e1bd8f806b0afcd4e0a407efb6dd7915b0cbf36ea7ec01bd`;
+the complete public JSON digest was
+`sha256:a64ab52114ffeadf00f6022a17489f24637816621cfe6ef7a9a857ae15287476`.
+
+## September 6 complete R4 reference protocol
+
+The new deterministic soak extends beyond the 12-root corpus with:
+
+- 144 snapshots from 16 fixed setup seeds at nine fixed committed-decision indices;
+- one paid-action root for each of the 105 supplied base-game cards; and
+- two focused high-choice roots exposing 46 and 10 legal actions.
+
+Every root goes through the production-path information-set builder, strict sampler, and rollout
+selector at two determinizations. The soak completed 251/251 roots and 1,860/1,860 routes with zero
+failures, zero ceiling hits, and a maximum route length of 18 transitions. This establishes more
+than the required 2x headroom beneath the experimental 1,024-transition ceiling. The embedded
+12-root reference rerun also completed all 322 routes; at two determinizations it measured 13.183
+median roots/s and a 0.281-second worst per-root p95. The maximum core route length was 10 across
+the full one/two/four sweep (9 at the target two determinizations).
+
+The fixed two-game rollout-vs-rollout `run_generation` smoke completed 258 committed actions in
+20.928 seconds (12.328 actions/s). The fixed one-pair, seat-swapped rollout-vs-random `ArenaRunner`
+smoke completed 202 committed actions in 11.269 seconds (17.925 actions/s), with 117 rollout
+selections and a maximum rollout route of 21 transitions. This arena is a throughput/completion
+smoke only; no playing-strength claim is computed from it.
+
+The complete command, including the warmed 12-root core benchmark, took 71.34 seconds and peaked at
+about 234 MiB RSS on the two-vCPU host:
+
+```bash
+time uv run innovation-ai rollout-feasibility \
+  --output artifacts/runs/milestone-4/deterministic-turn-rollout-r4-full \
+  --measure-remaining-gates
+```
+
+The output directory must be fresh. The command writes separate trusted-private and public-redacted
+soak/smoke JSON plus combined feasibility JSON/Markdown. The schema-v2 combined public deterministic
+content digest is
+`sha256:e7b9dbea2485108fa629d38acfa862814d468da98334cdfbc89d258c945dc734`;
+the complete public JSON file digest, which also covers timings, is
+`sha256:723d1951d86a461b6391ceeb9fb72da553e01ab86b3d908c69313d5818ae8188`.
+Missing measurements remain PENDING; reduced configurations or failed thresholds make overall PASS
+impossible.
+
+## Historical exhaustive-search stop
 
 ## One-completed-turn feasibility rerun
 
@@ -70,11 +126,10 @@ the route budget cannot plausibly satisfy both completion and throughput. The ne
 explicit project decision about search optimization, search approximation, evaluator/policy design,
 or additional compute.
 
-On September 5, 2026, the owner requested a concrete plan for the deterministic policy-rollout
-option: evaluate every legal root action, then follow one player-safe deterministic continuation
-path through the rest of the turn. The proposal and pre-strength gates are documented in
-`docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md`. It is not yet an implementation approval and does
-not change the historical descriptors or results recorded here.
+On September 5, 2026, the owner approved the deterministic policy-rollout option: evaluate every
+legal root action, then follow one player-safe deterministic continuation path through the rest of
+the turn. The approved contract and current staged-gate status are documented in
+`docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md`.
 
 ## Superseding one-turn decision
 

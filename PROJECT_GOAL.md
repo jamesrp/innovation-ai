@@ -20,20 +20,19 @@ one-ply afterstate selection, frozen-checkpoint iterative self-play, paired aren
 CPU profiling. The implementation runs on the CPU-only exe.dev development box and preserves
 clean paths to parallel actors and GPU-backed training or inference.
 
-Milestone 4's safe implementation foundation is now present: bounded root-sampled minimax,
-player-safe setup/effect determinizations, public board-card information, schema-v2 search-aware
-policy identities, scheduler/generation/arena routing, strategic-cycle keys, and complete private
-failure traces. The exact historical seed-50000 cycle has been reproduced and explained. The
-September 3, 2026 feasibility corpus found that the original exhaustive 4/3/4 completed-turn
-horizon misses its cutoff and throughput gates even at the provisional budget. The owner then
-replaced that horizon with one completed player turn for every search root and explicitly rejected
-selective continuation. The one-turn 400/800/1,600-transition sweep also failed: its best
-completion rate was 90.3% with a 9.7% immediate-leaf rate, while one-determinization throughput
-ranged from only 0.14 to 0.50 roots/s against a 2.0 roots/s gate. No production descriptor is
-frozen; heuristic arenas, training, and evaluation are stopped pending a project decision. See
-`docs/MILESTONE_4_FEASIBILITY_ADDENDUM.md`. The primary learned
-selector remains `temperature-softmax-v1`; the repetition-aware selector remains an experimental
-comparator.
+Milestone 4's safe implementation foundation is now present: the historical bounded root-sampled
+minimax remains readable and immutable, while the owner-approved deterministic turn-rollout
+recovery has a distinct descriptor, player-safe simple-heuristic continuation, scheduler and
+provenance integration, schema-v3 learned-policy identity, compact-replay schema v2, private
+failure traces, and an expanded feasibility benchmark. On September 5, 2026 the 12-root reference
+corpus completed all 322 routes with no failures or ceiling hits. On September 6, the full reference
+protocol added 251 seeded/all-card/high-choice roots and completed all 1,860 soak routes with no
+failures or ceiling hits and a maximum route length of 18. The rollout baseline then sustained
+12.328 committed actions/s through self-play generation and 17.925 committed actions/s through a
+non-strength paired arena smoke. All R4 feasibility gates pass. No production rollout descriptor is
+frozen yet, and strength arenas, training, and candidate evaluation remain stopped pending artifact
+review and descriptor freeze. The primary learned selector remains `temperature-softmax-v1`; the
+repetition-aware selector remains an experimental comparator.
 
 Preserve the engine as an explicit state machine. Every player choice remains a semantic
 `Decision`, and applying one semantic `Action` advances to the next decision or terminal result.
