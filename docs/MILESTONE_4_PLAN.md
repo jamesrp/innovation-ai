@@ -10,8 +10,9 @@ seeded/all-card/high-choice soak completed all 1,860 routes with no failures or 
 maximum route length of 18; rollout generation and non-strength arena smokes sustained 12.328 and
 17.925 committed actions/second. On September 6, 2026 the exact tested descriptor was
 production-frozen as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`
-(two determinizations; strict 1,024-transition ceiling). R5 fixed heuristic validation is in progress;
-training remains stopped until R5 passes. See
+(two determinizations; strict 1,024-transition ceiling). The random R5 completion preflight passed,
+but the original-simple-heuristic preflight hit the 10,000-action ceiling on setup seed 50005 with
+the rollout candidate in player 2. R5 is stopped at that hard gate and training remains blocked. See
 `docs/MILESTONE_4_DETERMINISTIC_ROLLOUT_PLAN.md` and the feasibility addendum.
 
 **Historical implementation status (September 3, 2026):** the player-safe search stack, public-covered
@@ -337,6 +338,14 @@ Validation proceeds in two predeclared stages:
 Report W/D/L, paired utility/interval, seats, reasons, lengths, search nodes, budget cutoffs,
 actions/s, RSS, and degenerate-game metrics. The frozen Work Package 0 cutoff-rate and throughput
 gates must also pass before training; they cannot be relaxed after arena results are visible.
+
+The random preflight passed on September 6, 2026. The original-simple-heuristic preflight launched
+from revision `aa794ca` later that day and failed its completion gate: game
+`preflight-heuristic-005:candidate-player-2`, setup seed 50005, reached the 10,000-action ceiling.
+The failure trace records heavy repeated-paid-action and no-op-dogma activity. No complete arena
+result was published, and the 100-pair comparison was not started. The next work is diagnosis and
+fixed-seed reproduction, not strength evaluation or training; see the deterministic rollout plan
+for the exact recorded evidence and stop conditions.
 
 ## 8. Work package 3 — restored primary candidate contract
 

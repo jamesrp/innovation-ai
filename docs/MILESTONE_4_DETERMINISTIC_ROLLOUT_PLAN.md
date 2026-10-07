@@ -7,8 +7,9 @@ soak completed all 1,860 routes with zero failures or ceiling hits and a maximum
 self-play generation and non-strength paired-arena smokes sustained 12.328 and 17.925 committed
 actions/second. On September 6, 2026 the exact R4-tested descriptor was production-frozen as
 `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1` with two
-determinizations and the strict 1,024-transition ceiling. R5 fixed heuristic validation is now in
-progress; R6 training has not started.
+determinizations and the strict 1,024-transition ceiling. R5 fixed heuristic validation is stopped
+after the original-simple-heuristic completion preflight hit the 10,000-action hard ceiling; R6
+training has not started.
 **Purpose:** replace infeasible exhaustive continuation after each root action with one versioned,
 player-safe deterministic continuation rollout, while still evaluating every legal root action over
 common hidden-state determinizations.
@@ -445,8 +446,24 @@ The random completion preflight completed on September 6, 2026: all 50 games fin
 action ceiling, with zero recorded sampler, rollout, invariant, replay, trace, or action-ceiling
 failures. The rollout heuristic scored 49–0–1, paired utility 0.980 with a 95% interval of
 [0.940, 1.000], and sustained 18.099 committed actions/second. Mean/minimum/maximum game length was
-102.6/49/193 actions; the maximum rollout route was 34 transitions. The original-simple-heuristic
-preflight is the next active R5 gate; no strength conclusion follows from the random preflight.
+102.6/49/193 actions; the maximum rollout route was 34 transitions. No strength conclusion follows
+from the random preflight.
+
+**Original-simple-heuristic preflight failure (recorded October 7, 2026).** The preflight launched
+on September 6 from source revision `aa794ca` and terminated with exit code 2. Game
+`preflight-heuristic-005:candidate-player-2` (setup seed 50005) reached exactly 10,000 committed
+actions and raised `ArenaActionLimitError`. Its trusted-private footer recorded 7,944 repeated paid
+actions and 1,975 no-op dogmas; the action tail repeatedly alternated drawing and activating
+Democracy, with recurring Anatomy effect resolution. Two concurrently active traces were closed
+with the propagated arena failure. The runner correctly published `arena-failure.json` rather than
+an incomplete arena result, report, or telemetry summary, so partial game outcomes must not be used
+for a completion or strength claim. Generated evidence remains in the ignored directory
+`artifacts/runs/milestone-4/r5/preflight-heuristic/`.
+
+This is the binding R5 hard stop. Diagnose and deterministically reproduce the repetition pathology
+before rerunning the same immutable seed schedule. Do not raise the 10,000-action ceiling, weaken the
+completion gate, proceed to the 100-pair strength comparison, or start R6 training without a new
+recorded project decision.
 
 ### Work Package R6 — resume Milestone 4 training
 
@@ -541,7 +558,7 @@ This recovery plan does not include:
 - [x] Scheduler, policy identity, replay, training, arena, and diagnostic routing implemented.
 - [x] Focused safety, determinism, horizon, setup, effect, and compatibility tests pass.
 - [x] Expanded feasibility process passes overall at two determinizations, including the 251-root route-length soak and both throughput smokes.
-- [ ] Fixed heuristic completion and strength arenas pass (R5 started September 6, 2026).
+- [ ] Fixed heuristic completion and strength arenas pass (R5 stopped after the September 6, 2026 original-simple-heuristic preflight hit the action ceiling).
 - [ ] Fresh Milestone 4 training and runnable primary policy complete.
 - [ ] Fixed candidate diagnostics and preflights complete.
 - [x] `make check` and relevant determinization/search soaks pass.

@@ -1,14 +1,16 @@
 # Milestone 4 feasibility and diagnostic addendum
 
-**Date:** September 6, 2026
+**Date:** September 6, 2026; status updated October 7, 2026
 **Current status:** the owner approved the deterministic turn-rollout recovery on September 5,
 2026. Its contracts, reference selector, scheduler/provenance integration, schema-v3 learned-policy
 identity, compact-replay schema v2, diagnostics, expanded core benchmark, route-length soak, and
 end-to-end rollout smoke measurements are implemented. The September 6 full reference protocol
 passed every R4 gate. On September 6, 2026 the exact tested rollout descriptor was
 production-frozen as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`
-at two determinizations with the strict 1,024-transition ceiling. R5 fixed heuristic validation is in
-progress; training remains stopped until it passes.
+at two determinizations with the strict 1,024-transition ceiling. The random R5 completion preflight
+passed, but the original-simple-heuristic preflight hit the 10,000-action ceiling on setup seed
+50005 with the rollout candidate in player 2. R5 is stopped for diagnosis; its strength comparison
+and training remain blocked.
 
 The trusted-private and public-redacted local evidence is retained under:
 

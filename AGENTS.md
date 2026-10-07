@@ -14,10 +14,12 @@ rollout-baseline smoke runners are implemented. The September 6 full reference p
 R4 gates: 251/251 soak roots and 1,860/1,860 routes completed with a maximum route length of 18,
 and generation/arena smokes sustained 12.328 and 17.925 committed actions/second. The exact R4-tested two-determinization, 1,024-transition rollout descriptor was production-frozen
 on September 6, 2026 as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`.
-R5 fixed heuristic validation is now in progress: the 25-pair random completion preflight passed on
-September 6, 2026, and the original-simple-heuristic preflight is next. Do not start fresh training
-or candidate evaluation until all R5 gates pass. See
-the Milestone 4 addendum and deterministic rollout plan.
+R5 fixed heuristic validation is stopped at a hard gate. The 25-pair random completion preflight
+passed on September 6, 2026, but the original-simple-heuristic preflight launched afterward failed:
+seed 50005 with the rollout candidate in player 2 reached the 10,000-action ceiling. No complete
+arena result was published. Diagnose the recorded repetition pathology before rerunning the fixed
+schedule; do not raise the action ceiling, run the strength arena, start fresh training, or evaluate
+a candidate until all R5 gates pass. See the Milestone 4 addendum and deterministic rollout plan.
 
 Read these before changing engine or ML behavior:
 

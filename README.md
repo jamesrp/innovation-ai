@@ -32,8 +32,9 @@ baseline generation and non-strength rollout-vs-random arena smokes sustained 12
 committed actions/second, respectively. Every R4 feasibility gate passed. On September 6, 2026 the exact tested descriptor was
 production-frozen as `sha256:c4704991445a58acc3747dd4117b65b2c1663fbaecc3db5fd08501342bd88ce1`
 (two determinizations; strict 1,024-transition route ceiling), with rollout agent
-`sampled-turn-rollout-heuristic-v1-c0c5487a9c2c5444`. Fixed R5 heuristic validation is now in
-progress; fresh training remains gated on its completion.
+`sampled-turn-rollout-heuristic-v1-c0c5487a9c2c5444`. The random R5 completion preflight passed,
+but the original-simple-heuristic preflight hit the 10,000-action ceiling on setup seed 50005.
+R5 is stopped for diagnosis; the strength arena and fresh training remain blocked.
 
 - Project contract: `PROJECT_GOAL.md`
 - Supplied rules/data: `game-rules-plaintext/`
