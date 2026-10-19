@@ -58,6 +58,19 @@ R5 is stopped for diagnosis; the strength arena and fresh training remain blocke
 - Future roadmap: `docs/ROADMAP.md`
 - Agent conventions: `AGENTS.md`
 
+## Committed pilot checkpoints
+
+The complete immutable Milestone 3 `pilot-001` checkpoint chain is deliberately tracked as an
+owner-approved preservation exception under `artifacts/runs/pilot-001/checkpoints/`:
+
+- bootstrap generation 0: `sha256:293de9146420a204c460683a4af2f3ec4a069fadc8617ba52d0d19c3801c9c20`;
+- learned candidate generation 1: `sha256:652e12baed1bde3cac92aa474b53647891e7826fdfb19a4b95b73dd39949a04c`.
+
+Each directory contains its manifest, model weights, optimizer state, and metrics; the corresponding
+policy descriptors and iteration state are tracked beside them. These are historical
+`rulebook-private-covered-v1` pilot artifacts, not approved Milestone 4 training lineage or a
+production policy.
+
 ## Development environment
 
 ```bash

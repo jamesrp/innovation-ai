@@ -91,7 +91,8 @@ Create paths only when their work package begins; avoid empty scaffolding.
 - `tests/`: mirrors package layout; card tests are partitioned to avoid agent conflicts
 - `game-rules-plaintext/`: immutable human-readable source material supplied by the user
 - `docs/`: architecture contracts, rules decisions, and implementation plans
-- `artifacts/`: generated checkpoints/metrics; ignored except deliberately committed fixtures
+- `artifacts/`: generated checkpoints/metrics; ignored except deliberately committed fixtures and
+  the owner-approved immutable `pilot-001` checkpoint bundle documented in `README.md`
 
 ## Engine contract
 
@@ -178,8 +179,9 @@ Create paths only when their work package begins; avoid empty scaffolding.
   must remain independent of ML frameworks.
 - Use `uv add`, `uv add --dev`, or `uv add --optional ai` when changing dependencies; commit
   `pyproject.toml` and `uv.lock` together.
-- Never commit secrets, `.env` files, virtual environments, generated datasets, or model
-  checkpoints.
+- Never commit secrets, `.env` files, virtual environments, generated datasets, or new model
+  checkpoints. The immutable `pilot-001` bootstrap and candidate checkpoints are an owner-approved
+  October 7, 2026 preservation exception; adding any other checkpoint requires explicit approval.
 - Update `AGENTS.md`, `README.md`, and the relevant contract/decision document when commands,
   architecture, or interpretations change.
 - Push completed commits to `origin` before handoff unless the user asks otherwise or the remote
